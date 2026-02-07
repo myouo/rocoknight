@@ -8,11 +8,7 @@ use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri::Emitter;
 
 type SharedConfig = Arc<Mutex<CoreConfig>>;
-
-#[derive(Default)]
-struct LoginState {
-    in_progress: Mutex<bool>,
-}
+type LoginState = Arc<Mutex<bool>>;
 
 #[derive(Clone, serde::Serialize)]
 struct StatusPayload {
@@ -58,7 +54,7 @@ async fn login_and_launch(
     login_state: tauri::State<'_, LoginState>,
 ) -> Result<(), String> {
     {
-        let mut guard = login_state.in_progress.lock().unwrap();
+        let mut guard = login_state.lock().unwrap();
         if *guard {
             return Err("login already in progress".to_string());
         }
@@ -69,7 +65,7 @@ async fn login_and_launch(
     let projector = match cfg.launcher.projector_path.clone() {
         Some(path) => path,
         None => {
-            let mut guard = login_state.in_progress.lock().unwrap();
+            let mut guard = login_state.lock().unwrap();
             *guard = false;
             return Err("projector_path is required".to_string());
         }
@@ -167,7 +163,7 @@ async fn login_and_launch(
             }
         }
 
-        let mut guard = login_state.in_progress.lock().unwrap();
+        let mut guard = login_state.lock().unwrap();
         *guard = false;
     });
 
@@ -195,7 +191,7 @@ fn main() {
     tauri::Builder::default()
         .manage(Arc::new(Mutex::new(CoreConfig::default())))
         .manage(ProcessManager::new())
-        .manage(LoginState::default())
+        .manage(Arc::new(Mutex::new(false)))
         .invoke_handler(tauri::generate_handler![
             get_config,
             set_config,
