@@ -23,33 +23,33 @@ struct ErrorPayload {
     message: String,
 }
 
-tauri::command
+#[tauri::command]
 fn get_config(state: tauri::State<SharedConfig>) -> CoreConfig {
     state.lock().unwrap().clone()
 }
 
-tauri::command
+#[tauri::command]
 fn set_config(state: tauri::State<SharedConfig>, cfg: CoreConfig) {
     *state.lock().unwrap() = cfg;
 }
 
-tauri::command
+#[tauri::command]
 fn launch(state: tauri::State<SharedConfig>, manager: tauri::State<ProcessManager>) -> Result<ProcessHandle, String> {
     let cfg = state.lock().unwrap().clone();
     manager.launch_projector(&cfg).map_err(|e| e.to_string())
 }
 
-tauri::command
+#[tauri::command]
 fn stop(manager: tauri::State<ProcessManager>, handle: ProcessHandle) -> Result<(), String> {
     manager.stop(&handle).map_err(|e| e.to_string())
 }
 
-tauri::command
+#[tauri::command]
 fn is_running(manager: tauri::State<ProcessManager>, handle: ProcessHandle) -> bool {
     manager.is_running(&handle)
 }
 
-tauri::command
+#[tauri::command]
 async fn login_and_launch(
     app: AppHandle,
     state: tauri::State<'_, SharedConfig>,

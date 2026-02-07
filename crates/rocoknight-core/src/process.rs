@@ -1,10 +1,12 @@
 use crate::error::{CoreError, CoreResult};
 use crate::config::CoreConfig;
+use std::collections::HashMap;
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessHandle {
     pub id: u64,
 }
