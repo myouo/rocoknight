@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:;" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RocoKnight</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>RocoKnight</h1>
+        <p>Ruffle + Electron shell (AS3 support depends on Ruffle).</p>
+      </header>
+      <main>
+        <div id="player"></div>
+        <section class="panel">
+          <h2>Status</h2>
+          <ul>
+            <li id="ruffle-status">Ruffle: not loaded</li>
+            <li id="swf-status">SWF: not loaded</li>
+          </ul>
+        </section>
+      </main>
+    </div>
+    <script src="../vendor/ruffle/ruffle.js"></script>
+    <script src="renderer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "rocoknight",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RocoKnight - Roco Kingdom client shell (Ruffle + Electron)",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "pack": "electron-packager . RocoKnight --overwrite"
+  },
+  "devDependencies": {
+    "electron": "^29.4.6",
+    "electron-packager": "^17.1.2"
+  }
+}
