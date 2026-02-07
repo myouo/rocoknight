@@ -14,12 +14,12 @@ struct LoginState {
     in_progress: Mutex<bool>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 struct StatusPayload {
     status: &'static str,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 struct ErrorPayload {
     message: String,
 }
