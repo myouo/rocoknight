@@ -89,7 +89,7 @@ async fn login_and_launch(
         .resizable(true)
         .build()
         .map_err(|e| {
-            let mut guard = login_state.in_progress.lock().unwrap();
+            let mut guard = login_state.lock().unwrap();
             *guard = false;
             e.to_string()
         })?;
