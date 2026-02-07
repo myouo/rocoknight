@@ -3,3 +3,4 @@ node_modules/
 /out/
 /assets/game.swf
 /vendor/ruffle/
+target/

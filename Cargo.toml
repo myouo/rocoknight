@@ -1,0 +1,23 @@
+[workspace]
+members = [
+  "crates/rocoknight-core",
+  "crates/rocoknight-plugins",
+  "apps/rocoknight-ui-tauri/src-tauri",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "time"] }
+
