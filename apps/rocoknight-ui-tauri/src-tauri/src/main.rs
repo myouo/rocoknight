@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::Emitter;
 
 type SharedConfig = Arc<Mutex<CoreConfig>>;
 
@@ -74,7 +75,7 @@ async fn login_and_launch(
         }
     };
 
-    let _ = app.emit_all(
+    let _ = app.emit(
         "login_status",
         StatusPayload {
             status: "WaitingForLogin",
@@ -97,7 +98,7 @@ async fn login_and_launch(
             e.to_string()
         })?;
 
-    let (close_tx, mut close_rx) = tokio::sync::watch::channel(false);
+    let (close_tx, mut close_rx) = tokio::sync::watch::channel::<bool>(false);
     let finished = Arc::new(AtomicBool::new(false));
     let finished_close = finished.clone();
     window.on_window_event(move |event| {
@@ -124,29 +125,29 @@ async fn login_and_launch(
                     if start.elapsed() > timeout {
                         finished_task.store(true, Ordering::SeqCst);
                         let _ = window.close();
-                        let _ = app_clone.emit_all("login_error", ErrorPayload {
+                        let _ = app_clone.emit("login_error", ErrorPayload {
                             message: "登录超时，请重试".to_string(),
                         });
-                        let _ = app_clone.emit_all("login_status", StatusPayload { status: "Idle" });
+                        let _ = app_clone.emit("login_status", StatusPayload { status: "Idle" });
                         break;
                     }
 
                     if let Ok(current) = window.url() {
                         if let Some(matched_url) = match_main_swf(&current) {
-                            let _ = app_clone.emit_all("login_status", StatusPayload { status: "Launching" });
+                            let _ = app_clone.emit("login_status", StatusPayload { status: "Launching" });
                             finished_task.store(true, Ordering::SeqCst);
                             let _ = window.close();
 
                             let launch_result = manager.launch_projector_with_url(projector.clone(), matched_url);
                             match launch_result {
                                 Ok(_) => {
-                                    let _ = app_clone.emit_all("login_status", StatusPayload { status: "Running" });
+                                    let _ = app_clone.emit("login_status", StatusPayload { status: "Running" });
                                 }
                                 Err(_) => {
-                                    let _ = app_clone.emit_all("login_error", ErrorPayload {
+                                    let _ = app_clone.emit("login_error", ErrorPayload {
                                         message: "启动失败，请检查 Projector 路径".to_string(),
                                     });
-                                    let _ = app_clone.emit_all("login_status", StatusPayload { status: "Idle" });
+                                    let _ = app_clone.emit("login_status", StatusPayload { status: "Idle" });
                                 }
                             }
                             break;
@@ -156,10 +157,10 @@ async fn login_and_launch(
                 changed = close_rx.changed() => {
                     if changed.is_ok() && *close_rx.borrow() {
                         finished_task.store(true, Ordering::SeqCst);
-                        let _ = app_clone.emit_all("login_error", ErrorPayload {
+                        let _ = app_clone.emit("login_error", ErrorPayload {
                             message: "登录窗口已关闭".to_string(),
                         });
-                        let _ = app_clone.emit_all("login_status", StatusPayload { status: "Idle" });
+                        let _ = app_clone.emit("login_status", StatusPayload { status: "Idle" });
                         break;
                     }
                 }

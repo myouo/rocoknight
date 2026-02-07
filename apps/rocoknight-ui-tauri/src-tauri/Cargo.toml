@@ -9,6 +9,7 @@ build = "build.rs"
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = ["unstable"] }
+tokio.workspace = true
 
 rocoknight-core = { path = "../../../crates/rocoknight-core" }
 
