@@ -35,6 +35,11 @@ struct ErrorPayload {
     message: String,
 }
 
+#[derive(Clone, serde::Serialize)]
+struct DebugPayload {
+    message: String,
+}
+
 #[tauri::command]
 fn get_config(state: tauri::State<SharedConfig>) -> CoreConfig {
     state.lock().unwrap().clone()
@@ -91,6 +96,12 @@ async fn start_login_flow(
         "login_status",
         StatusPayload {
             status: "Waiting",
+        },
+    );
+    let _ = app.emit(
+        "login_debug",
+        DebugPayload {
+            message: "开始登录流程".to_string(),
         },
     );
 
@@ -156,6 +167,9 @@ async fn start_login_flow(
                         let _ = app_clone.emit("login_error", ErrorPayload {
                             message: "登录超时，请重试".to_string(),
                         });
+                        let _ = app_clone.emit("login_debug", DebugPayload {
+                            message: "登录超时，未捕获到 main.swf".to_string(),
+                        });
                         let _ = app_clone.emit("login_status", StatusPayload { status: "Error" });
                         break;
                     }
@@ -163,12 +177,18 @@ async fn start_login_flow(
                     if let Ok(current) = window.url() {
                         if let Some(matched_url) = match_main_swf(&current) {
                             let _ = app_clone.emit("login_status", StatusPayload { status: "Launching" });
+                            let _ = app_clone.emit("login_debug", DebugPayload {
+                                message: format!("捕获到目标 URL: {}", redact_url(&matched_url)),
+                            });
                             finished_task.store(true, Ordering::SeqCst);
                             let _ = window.close();
 
                             match launch_and_embed(&app_clone, &manager, &embed_state, &cfg, matched_url).await {
                                 Ok(_) => {
                                     let _ = app_clone.emit("login_status", StatusPayload { status: "Running" });
+                                    let _ = app_clone.emit("login_debug", DebugPayload {
+                                        message: "Projector 启动并嵌入成功".to_string(),
+                                    });
                                 }
                                 Err(message) => {
                                     let _ = app_clone.emit("login_error", ErrorPayload { message });
@@ -184,6 +204,9 @@ async fn start_login_flow(
                         finished_task.store(true, Ordering::SeqCst);
                         let _ = app_clone.emit("login_error", ErrorPayload {
                             message: "登录窗口已关闭".to_string(),
+                        });
+                        let _ = app_clone.emit("login_debug", DebugPayload {
+                            message: "登录窗口被用户关闭".to_string(),
                         });
                         let _ = app_clone.emit("login_status", StatusPayload { status: "Error" });
                         break;
@@ -222,18 +245,16 @@ fn stop_game(
 }
 
 fn match_main_swf(url: &Url) -> Option<String> {
-    let host = url.host_str()?;
-    if host != "res.17roco.qq.com" {
+    let raw = url.as_str();
+    if !raw.contains("main.swf") {
         return None;
     }
-    if !url.path().contains("main.swf") {
-        return None;
+    if let Some(host) = url.host_str() {
+        if !host.ends_with("qq.com") {
+            return None;
+        }
     }
-    let query = url.query().unwrap_or("");
-    if query.is_empty() {
-        return None;
-    }
-    Some(url.as_str().to_string())
+    Some(raw.to_string())
 }
 
 async fn launch_and_embed(
@@ -246,7 +267,7 @@ async fn launch_and_embed(
     let projector_path = resolve_projector_path(app, cfg)?;
     let handle = manager
         .launch_projector_with_url(projector_path, swf_url)
-        .map_err(|_| "启动失败，请检查 Projector".to_string())?;
+        .map_err(|e| format!("启动失败: {}", e))?;
 
     *embed.projector_handle.lock().unwrap() = Some(handle.clone());
 
@@ -301,6 +322,14 @@ fn resolve_projector_path(app: &AppHandle, cfg: &CoreConfig) -> Result<PathBuf, 
         Ok(path)
     } else {
         Err("projector.exe 未找到，请在资源目录中提供".to_string())
+    }
+}
+
+fn redact_url(url: &str) -> String {
+    if let Ok(parsed) = Url::parse(url) {
+        format!("{}{}", parsed.origin().ascii_serialization(), parsed.path())
+    } else {
+        "redacted".to_string()
     }
 }
 
