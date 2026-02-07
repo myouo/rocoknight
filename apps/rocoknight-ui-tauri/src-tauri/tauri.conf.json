@@ -22,6 +22,9 @@
     }
   },
   "bundle": {
+    "resources": [
+      "projector.exe"
+    ],
     "icon": [
       "icons/icon.ico"
     ]

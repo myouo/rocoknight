@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessHandle {
     pub id: u64,
+    pub pid: u32,
 }
 
 #[derive(Clone, Default)]
@@ -45,12 +46,13 @@ impl ProcessManager {
         let mut cmd = Command::new(projector_path);
         cmd.arg(url);
         let child = cmd.spawn()?;
+        let pid = child.id();
 
         let mut state = self.inner.lock().unwrap();
         let id = state.next_id;
         state.next_id += 1;
         state.children.insert(id, child);
-        Ok(ProcessHandle { id })
+        Ok(ProcessHandle { id, pid })
     }
 
     pub fn stop(&self, handle: &ProcessHandle) -> CoreResult<()> {

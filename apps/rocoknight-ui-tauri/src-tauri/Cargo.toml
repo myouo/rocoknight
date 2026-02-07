@@ -11,7 +11,7 @@ serde_json.workspace = true
 tauri = { version = "2", features = ["unstable"] }
 tokio.workspace = true
 
-rocoknight-core = { path = "../../../crates/rocoknight-core" }
+rocoknight-core = { path = "../../../crates/rocoknight-core", features = ["windows-native"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
