@@ -1,0 +1,4 @@
+Place your Flash Standalone Projector binary here as:
+resources/projector.exe
+
+The app will bundle this file into the Tauri resources and launch it at runtime.

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "RocoKnight",
+  "version": "0.1.0",
+  "identifier": "com.rocoknight.app",
+  "build": {
+    "frontendDist": "../static"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "RocoKnight",
+        "width": 1440,
+        "height": 1080,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "devtools": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' tauri: asset: https://17roco.qq.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' tauri: asset:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https: asset: tauri:; connect-src 'self' https://17roco.qq.com;"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icon/icon.ico"
+    ],
+    "resources": [
+      "resources/projector.exe"
+    ]
+  }
+}
