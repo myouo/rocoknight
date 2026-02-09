@@ -4,20 +4,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::io::Write;
 
 use tauri::{AppHandle, Manager, State};
+use tracing::info;
 
 use crate::state::{emit_status, AppState, AppStatus};
-
-const LOG_GREEN: &str = "\x1b[32m";
-const LOG_BLUE: &str = "\x1b[34m";
-const LOG_RESET: &str = "\x1b[0m";
 
 const LOGIN3_PATH_NEEDLE: &str = "/fcgi-bin/login3";
 const MAX_RESPONSE_BYTES: usize = 1_500_000;
 const TIMEOUT_SECS: u64 = 180;
 
 fn debug_log(message: &str) {
-  println!("{LOG_GREEN}[RocoKnight]{LOG_BLUE}[login3]{LOG_RESET} {message}");
-  tracing::info!("{message}");
+  info!("[RocoKnight][login3] {message}");
 }
 
 fn redact_url(url: &str) -> String {
@@ -114,7 +110,6 @@ pub fn start(app: AppHandle, state: State<Mutex<AppState>>) -> Result<(), String
   with_state(&state, |s| {
     s.status = AppStatus::Capturing;
     s.message = Some("Capturing login3 response".to_string());
-    s.swf_url = None;
     s.capture_stop = Some(stop_flag.clone());
   });
   emit_status(&app, &state.lock().expect("state lock"));
@@ -129,7 +124,6 @@ pub fn stop(app: AppHandle, state: State<Mutex<AppState>>) {
   with_state(&state, |s| {
     s.status = AppStatus::Login;
     s.message = None;
-    s.swf_url = None;
   });
   emit_status(&app, &state.lock().expect("state lock"));
   debug_log("capture stopped");
@@ -162,7 +156,6 @@ fn start_timeout(app: AppHandle, stop_flag: Arc<AtomicBool>) {
         if matches!(guard.status, AppStatus::Capturing) && guard.swf_url.is_none() {
           guard.status = AppStatus::Error;
           guard.message = Some("Login timed out (180s). Please retry.".to_string());
-          guard.swf_url = None;
           emit_status(&app, &guard);
         }
       };
@@ -225,7 +218,9 @@ pub fn handle_login3_response(app: &AppHandle, state: &State<Mutex<AppState>>, h
     let app_handle = app.clone();
     let _ = app_handle.clone().run_on_main_thread(move || {
       let state_handle = app_handle.state::<Mutex<AppState>>();
-      let _ = crate::launcher::launch_projector_auto(&app_handle, &state_handle);
+      if let Err(err) = crate::launcher::launch_projector_auto(&app_handle, &state_handle) {
+        debug_log(&format!("launch_projector_auto: failed: {err}"));
+      }
     });
   }
 }

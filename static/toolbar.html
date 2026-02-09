@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RocoKnight Toolbar</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #111722;
+        color: #c8d0e0;
+        font-family: "Segoe UI", sans-serif;
+      }
+      body.light {
+        background: #e9eef7;
+        color: #2b3344;
+      }
+      .topbar {
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        padding: 4px 10px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      body.light .topbar {
+        border-bottom: 1px solid rgba(43, 51, 68, 0.15);
+      }
+      .group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .toolbar-btn {
+        height: 28px;
+        padding: 0 12px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.08);
+        color: inherit;
+        font-size: 13px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .toolbar-btn:hover {
+        background: rgba(255, 255, 255, 0.16);
+      }
+      .toolbar-btn:active {
+        transform: translateY(1px);
+      }
+      body.light .toolbar-btn {
+        border: 1px solid rgba(43, 51, 68, 0.25);
+        background: rgba(43, 51, 68, 0.06);
+      }
+      body.light .toolbar-btn:hover {
+        background: rgba(43, 51, 68, 0.12);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <div class="group">
+        <button class="toolbar-btn" id="btn-relogin" type="button">重新登录</button>
+        <button class="toolbar-btn" id="btn-change-channel" type="button">更换频道</button>
+      </div>
+      <div class="group">
+        <button class="toolbar-btn" id="btn-toggle-theme" type="button">切换主题</button>
+      </div>
+    </div>
+    <script>
+      let currentTheme = "dark";
+
+      async function invoke(name, payload) {
+        const t = window.__TAURI__ || window.__TAURI_INTERNALS__;
+        const invoker = t && (t.invoke || (t.core && t.core.invoke));
+        if (!invoker) {
+          console.warn("TAURI invoke unavailable", name);
+          return null;
+        }
+        try {
+          return await invoker(name, payload || {});
+        } catch (err) {
+          console.warn("TAURI invoke failed", name, err);
+          return null;
+        }
+      }
+
+      function applyTheme(theme) {
+        currentTheme = theme === "light" ? "light" : "dark";
+        document.body.classList.toggle("light", currentTheme === "light");
+      }
+
+      async function initTheme() {
+        const mode = await invoke("get_theme_mode");
+        applyTheme(mode || "dark");
+      }
+
+      async function toggleTheme() {
+        const next = currentTheme === "light" ? "dark" : "light";
+        const mode = await invoke("set_theme_mode", { theme: next });
+        applyTheme(mode || next);
+      }
+
+      async function relogin() {
+        await invoke("reset_to_login");
+      }
+
+      async function changeChannel() {
+        await invoke("change_channel");
+      }
+
+      document.getElementById("btn-relogin")?.addEventListener("click", relogin);
+      document.getElementById("btn-change-channel")?.addEventListener("click", changeChannel);
+      document.getElementById("btn-toggle-theme")?.addEventListener("click", toggleTheme);
+      initTheme();
+    </script>
+  </body>
+</html>

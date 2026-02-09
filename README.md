@@ -37,6 +37,9 @@ npm run build
 ## 核心流程
 
 - 主窗口创建时加载登录页：`https://17roco.qq.com/login.html`
+- Windows 平台通过 WebView2 `WebResourceResponseReceived` 拦截 `login3` 响应
+- 在响应 HTML 中解析 `flashVars`（含 `angel_uin/angel_key/skey/pskey` 等）
+- 组装最终 URL：`https://res.17roco.qq.com/main.swf?<random>=&{flashVars}`
 - 启动内置 `projector.exe` 并将其窗口嵌入主窗口（Win32 attach）
 - 隐藏登录 WebView，进入运行状态
 

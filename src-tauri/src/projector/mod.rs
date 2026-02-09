@@ -27,8 +27,28 @@ pub fn resolve_projector_path(app: &AppHandle) -> Result<PathBuf, String> {
     return Ok(fallback);
   }
 
+  if let Ok(mut exe) = std::env::current_exe() {
+    exe.pop();
+    let candidates = [
+      exe.join("resources").join("projector.exe"),
+      exe.join("..").join("resources").join("projector.exe"),
+      exe.join("..").join("..").join("resources").join("projector.exe"),
+      exe.join("..").join("..").join("debug").join("resources").join("projector.exe"),
+      exe.join("..").join("..").join("release").join("resources").join("projector.exe"),
+    ];
+    for candidate in candidates {
+      if fs::metadata(&candidate).is_ok() {
+        info!(
+          "projector path resolved (exe fallback): {}",
+          candidate.display()
+        );
+        return Ok(candidate);
+      }
+    }
+  }
+
   Err(format!(
-    "Failed to locate projector.exe. Checked: {}, {}.",
+    "Failed to locate projector.exe. Checked: {}, {}, and dev resources.",
     resolved.display(),
     fallback.display()
   ))

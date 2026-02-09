@@ -1,13 +1,24 @@
 use std::sync::Mutex;
+use std::time::Duration;
 
 use tauri::{AppHandle, Manager, State};
-use tauri::{PhysicalSize, Size};
+use tauri::PhysicalSize;
 use windows::Win32::Foundation::HWND;
 
-use crate::embed_win32::{attach_child, bring_to_top, detach_child, find_window_by_pid, move_child};
+use crate::embed_win32::{
+  attach_child,
+  bring_to_top,
+  detach_child,
+  find_window_by_pid,
+  move_child,
+  parent_client_size,
+};
 use crate::projector::{resolve_projector_path, stop_projector as kill_projector};
 use crate::state::{emit_status, AppState, AppStatus, ProjectorHandle};
 use tracing::info;
+
+const LOGIN_ZOOM: f64 = 1.17;
+const UI_BAR_HEIGHT: i32 = 36;
 
 fn main_window(app: &AppHandle) -> Result<tauri::Window, String> {
   app
@@ -28,6 +39,15 @@ fn main_window_size_physical(app: &AppHandle) -> Result<PhysicalSize<u32>, Strin
     .inner_size()
     .map_err(|_| "Failed to get window size.".to_string())?;
   Ok(size)
+}
+
+fn main_window_scale(app: &AppHandle) -> f64 {
+  if let Ok(window) = main_window(app) {
+    if let Ok(scale) = window.scale_factor() {
+      return scale;
+    }
+  }
+  1.0
 }
 
 fn with_state<R>(state: &State<Mutex<AppState>>, f: impl FnOnce(&mut AppState) -> R) -> R {
@@ -51,7 +71,6 @@ pub fn stop_projector(state: &State<Mutex<AppState>>) {
     }
     s.status = AppStatus::Login;
     s.message = None;
-    s.swf_url = None;
   });
 }
 
@@ -107,46 +126,77 @@ pub fn launch_projector_auto(app: &AppHandle, state: &State<Mutex<AppState>>) ->
     }
   };
 
-  let size = main_window_size_physical(app)?;
-  move_child(child_hwnd, 0, 0, size.width as i32, size.height as i32);
+  if let Some((w, h)) = parent_client_size(main_hwnd) {
+    let scale = main_window_scale(app);
+    let bar_h = ((UI_BAR_HEIGHT as f64) * scale).round() as i32;
+    let usable_h = (h - bar_h).max(1);
+    move_child(child_hwnd, 0, bar_h, w, usable_h);
+  } else {
+    let size = main_window_size_physical(app)?;
+    let scale = main_window_scale(app);
+    let bar_h = ((UI_BAR_HEIGHT as f64) * scale).round() as i32;
+    let usable_h = (size.height as i32 - bar_h).max(1);
+    move_child(child_hwnd, 0, bar_h, size.width as i32, usable_h);
+  }
   bring_to_top(child_hwnd);
   info!("[RocoKnight][launcher] projector attached and brought to top");
+  schedule_projector_fit(app.clone());
 
   with_state(state, |s| {
     s.projector = Some(ProjectorHandle {
       child,
-      pid,
       hwnd: child_hwnd.0 as isize,
       original_style,
     });
     s.status = AppStatus::Running;
     s.message = None;
-    s.swf_url = None;
   });
   emit_status(app, &state.lock().expect("state lock"));
 
   if let Some(login) = app.get_webview("login") {
     let _ = login.hide();
   }
-  if let Some(main_webview) = app.get_webview("main") {
-    let _ = main_webview.hide();
+  if let Some(main) = app.get_webview("main") {
+    let _ = main.hide();
   }
-  info!("[RocoKnight][launcher] webviews hidden for projector");
+  info!("[RocoKnight][launcher] login webview hidden for projector");
 
   Ok(())
+}
+
+fn schedule_projector_fit(app: AppHandle) {
+  std::thread::spawn(move || {
+    let delays_ms = [50u64, 150, 300, 600, 1200, 2000];
+    for delay in delays_ms {
+      std::thread::sleep(Duration::from_millis(delay));
+      let app_clone = app.clone();
+      let app_for_task = app_clone.clone();
+      let _ = app_clone.run_on_main_thread(move || {
+        let state = app_for_task.state::<Mutex<AppState>>();
+        resize_projector_to_window(&app_for_task, &state);
+      });
+    }
+  });
 }
 
 pub fn resize_projector_to_window(app: &AppHandle, state: &State<Mutex<AppState>>) {
   let projector = with_state(state, |s| s.projector.as_ref().map(|p| p.hwnd));
   if let Some(hwnd) = projector {
+    if let Ok(parent) = main_hwnd(app) {
+      if let Some((w, h)) = parent_client_size(parent) {
+        let scale = main_window_scale(app);
+        let bar_h = ((UI_BAR_HEIGHT as f64) * scale).round() as i32;
+        let usable_h = (h - bar_h).max(1);
+        move_child(HWND(hwnd as *mut std::ffi::c_void), 0, bar_h, w, usable_h);
+        bring_to_top(HWND(hwnd as *mut std::ffi::c_void));
+        return;
+      }
+    }
     if let Ok(size) = main_window_size_physical(app) {
-      move_child(
-        HWND(hwnd as *mut std::ffi::c_void),
-        0,
-        0,
-        size.width as i32,
-        size.height as i32,
-      );
+      let scale = main_window_scale(app);
+      let bar_h = ((UI_BAR_HEIGHT as f64) * scale).round() as i32;
+      let usable_h = (size.height as i32 - bar_h).max(1);
+      move_child(HWND(hwnd as *mut std::ffi::c_void), 0, bar_h, size.width as i32, usable_h);
       bring_to_top(HWND(hwnd as *mut std::ffi::c_void));
     }
   }
@@ -159,25 +209,29 @@ pub fn resize_login_to_window(app: &AppHandle) {
       let w = ((size.width as f64) / scale).round() as i32;
       let h = ((size.height as f64) / scale).round() as i32;
       if let Some(login) = app.get_webview("login") {
-        let _ = login.set_position(tauri::LogicalPosition::new(0, 0));
-        let _ = login.set_size(tauri::LogicalSize::new(w, h));
+        let usable_h = (h - UI_BAR_HEIGHT).max(1);
+        let _ = login.set_position(tauri::LogicalPosition::new(0, UI_BAR_HEIGHT));
+        let _ = login.set_size(tauri::LogicalSize::new(w, usable_h));
+        let _ = login.set_zoom(LOGIN_ZOOM);
+      }
+      if let Some(toolbar) = app.get_webview("toolbar") {
+        let _ = toolbar.set_position(tauri::LogicalPosition::new(0, 0));
+        let _ = toolbar.set_size(tauri::LogicalSize::new(w, UI_BAR_HEIGHT));
       }
     }
   }
 }
 
-pub fn ensure_main_size_ratio(app: &AppHandle, size: PhysicalSize<u32>) {
-  let window = match main_window(app) {
-    Ok(w) => w,
-    Err(_) => return,
-  };
-  let target_w = size.width;
-  let target_h = size.height;
-  if target_h == 0 || target_w == 0 {
-    return;
-  }
-  let desired_h = target_w * 3 / 4;
-  if target_h != desired_h {
-    let _ = window.set_size(Size::Physical(PhysicalSize::new(target_w, desired_h)));
-  }
+pub fn schedule_login_layout(app: AppHandle) {
+  std::thread::spawn(move || {
+    let delays_ms = [50u64, 150, 300, 600];
+    for delay in delays_ms {
+      std::thread::sleep(Duration::from_millis(delay));
+      let app_clone = app.clone();
+      let app_for_cb = app_clone.clone();
+      let _ = app_clone.run_on_main_thread(move || {
+        resize_login_to_window(&app_for_cb);
+      });
+    }
+  });
 }

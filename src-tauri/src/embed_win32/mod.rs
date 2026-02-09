@@ -3,12 +3,15 @@ mod win {
   use std::time::{Duration, Instant};
   use windows::core::BOOL;
   use windows::Win32::Foundation::{HWND, LPARAM};
+  use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
   use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindowVisible, MoveWindow,
-    SetParent, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, GW_OWNER, HWND_TOP, SWP_FRAMECHANGED,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_POPUP,
-    WS_VISIBLE,
+    EnumWindows, GetClientRect, GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId,
+    IsWindowVisible, MoveWindow, SetParent, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, GW_OWNER,
+    HWND_TOP, SWP_FRAMECHANGED,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WS_CHILD, WS_MAXIMIZEBOX,
+    WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SIZEBOX, WS_VISIBLE,
   };
+  use windows::Win32::Foundation::RECT;
 
   #[derive(Default)]
   struct FindData {
@@ -91,6 +94,42 @@ mod win {
     }
   }
 
+  pub fn set_dpi_awareness() -> bool {
+    unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_ok() }
+  }
+
+  pub fn disable_maximize_resize(hwnd: HWND) {
+    unsafe {
+      let mut style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+      style &= !(WS_MAXIMIZEBOX.0 as isize);
+      style &= !(WS_SIZEBOX.0 as isize);
+      SetWindowLongPtrW(hwnd, GWL_STYLE, style);
+      let _ = SetWindowPos(
+        hwnd,
+        Some(HWND_TOP),
+        0,
+        0,
+        0,
+        0,
+        SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+      );
+    }
+  }
+
+  pub fn parent_client_size(parent_hwnd: HWND) -> Option<(i32, i32)> {
+    unsafe {
+      let mut rect = RECT::default();
+      if GetClientRect(parent_hwnd, &mut rect).is_ok() {
+        let w = rect.right - rect.left;
+        let h = rect.bottom - rect.top;
+        if w > 0 && h > 0 {
+          return Some((w, h));
+        }
+      }
+    }
+    None
+  }
+
   pub fn bring_to_top(child_hwnd: HWND) {
     unsafe {
       let _ = SetWindowPos(
@@ -124,6 +163,18 @@ mod non_win {
   pub fn detach_child(_child_hwnd: HWND, _original_style: isize) {}
 
   pub fn move_child(_child_hwnd: HWND, _x: i32, _y: i32, _w: i32, _h: i32) {}
+
+  pub fn set_dpi_awareness() -> bool {
+    false
+  }
+
+  pub fn disable_maximize_resize(_hwnd: HWND) {}
+
+  pub fn parent_client_size(_parent_hwnd: HWND) -> Option<(i32, i32)> {
+    None
+  }
+
+  pub fn bring_to_top(_child_hwnd: HWND) {}
 }
 
 #[cfg(not(target_os = "windows"))]

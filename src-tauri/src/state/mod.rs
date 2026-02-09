@@ -12,6 +12,21 @@ pub enum AppStatus {
   Error,
 }
 
+#[derive(Clone, Copy, serde::Serialize)]
+pub enum ThemeMode {
+  Dark,
+  Light,
+}
+
+impl ThemeMode {
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      ThemeMode::Dark => "dark",
+      ThemeMode::Light => "light",
+    }
+  }
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct StatusPayload {
   pub status: AppStatus,
@@ -20,7 +35,6 @@ pub struct StatusPayload {
 
 pub struct ProjectorHandle {
   pub child: Child,
-  pub pid: u32,
   pub hwnd: isize,
   pub original_style: isize,
 }
@@ -28,6 +42,7 @@ pub struct ProjectorHandle {
 pub struct AppState {
   pub status: AppStatus,
   pub message: Option<String>,
+  pub theme_mode: ThemeMode,
   pub swf_url: Option<String>,
   pub capture_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
   pub projector: Option<ProjectorHandle>,
@@ -38,6 +53,7 @@ impl AppState {
     Self {
       status: AppStatus::Login,
       message: None,
+      theme_mode: ThemeMode::Dark,
       swf_url: None,
       capture_stop: None,
       projector: None,

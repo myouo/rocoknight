@@ -1,18 +1,56 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RocoKnight</title>
     <style>
-      html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #0b0d12; color: #c8d0e0; font-family: "Segoe UI", sans-serif; }
-      .wrap { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 14px; letter-spacing: 0.4px; }
-      .hint { opacity: 0.7; }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #0b0d12;
+        color: #c8d0e0;
+        font-family: "Segoe UI", sans-serif;
+      }
+      body.light {
+        background: #f4f6fb;
+        color: #2b3344;
+      }
+      .main {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
     </style>
   </head>
   <body>
-    <div class="wrap">
-      <div class="hint">RocoKnight is running…</div>
-    </div>
+    <div class="main" id="main-content"></div>
+    <script>
+      async function invoke(name, payload) {
+        const t = window.__TAURI__ || window.__TAURI_INTERNALS__;
+        const invoker = t && (t.invoke || (t.core && t.core.invoke));
+        if (!invoker) {
+          console.warn("TAURI invoke unavailable", {
+            hasTauri: typeof window.__TAURI__ !== "undefined",
+            hasTauriInternals: typeof window.__TAURI_INTERNALS__ !== "undefined"
+          });
+          return;
+        }
+        try {
+          console.log("[RocoKnight][ui] invoke", name, payload || {});
+          await invoker(name, payload || {});
+          console.log("[RocoKnight][ui] invoke ok", name);
+        } catch (err) {
+          console.warn("TAURI invoke failed", name, err);
+        }
+      }
+      console.log("[RocoKnight][ui] boot", {
+        hasTauri: typeof window.__TAURI__ !== "undefined",
+        hasTauriInternals: typeof window.__TAURI_INTERNALS__ !== "undefined"
+      });
+    </script>
   </body>
 </html>
