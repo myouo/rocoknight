@@ -69,6 +69,7 @@
       <div class="group">
         <button class="toolbar-btn" id="btn-relogin" type="button">重新登录</button>
         <button class="toolbar-btn" id="btn-change-channel" type="button">更换频道</button>
+        <button class="toolbar-btn" id="btn-speed" type="button">倍速 1x</button>
       </div>
       <div class="group">
         <button class="toolbar-btn" id="btn-toggle-theme" type="button">切换主题</button>
@@ -116,9 +117,21 @@
         await invoke("change_channel");
       }
 
+      const SPEED_STEPS = [1, 2, 4, 10];
+      let speedIndex = 0;
+
+      async function cycleSpeed() {
+        speedIndex = (speedIndex + 1) % SPEED_STEPS.length;
+        const multiplier = SPEED_STEPS[speedIndex];
+        const actual = await invoke("set_speed", { multiplier });
+        const display = actual !== null ? actual : multiplier;
+        document.getElementById("btn-speed").textContent = "倍速 " + display + "x";
+      }
+
       document.getElementById("btn-relogin")?.addEventListener("click", relogin);
       document.getElementById("btn-change-channel")?.addEventListener("click", changeChannel);
       document.getElementById("btn-toggle-theme")?.addEventListener("click", toggleTheme);
+      document.getElementById("btn-speed")?.addEventListener("click", cycleSpeed);
       initTheme();
     </script>
   </body>

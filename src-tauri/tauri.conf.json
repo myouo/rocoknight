@@ -31,7 +31,9 @@
       "icon/icon.ico"
     ],
     "resources": [
-      "resources/projector.exe"
+      "resources/projector.exe",
+      "resources/speed_hook_32.dll",
+      "resources/speed_hook_64.dll"
     ]
   }
 }
