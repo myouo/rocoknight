@@ -11,7 +11,7 @@
         padding: 0;
         width: 100%;
         height: 100%;
-        background: #0b0d12;
+        background: #202834;
         color: #c8d0e0;
         font-family: "Segoe UI", sans-serif;
       }
@@ -51,6 +51,7 @@
         hasTauri: typeof window.__TAURI__ !== "undefined",
         hasTauriInternals: typeof window.__TAURI_INTERNALS__ !== "undefined"
       });
+      document.addEventListener("contextmenu", (event) => event.preventDefault());
     </script>
   </body>
 </html>

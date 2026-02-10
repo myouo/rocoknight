@@ -12,7 +12,7 @@
         width: 100%;
         height: 100%;
         overflow: hidden;
-        background: #111722;
+        background: #232c3a;
         color: #c8d0e0;
         font-family: "Segoe UI", sans-serif;
       }
@@ -119,6 +119,7 @@
       document.getElementById("btn-relogin")?.addEventListener("click", relogin);
       document.getElementById("btn-change-channel")?.addEventListener("click", changeChannel);
       document.getElementById("btn-toggle-theme")?.addEventListener("click", toggleTheme);
+      document.addEventListener("contextmenu", (event) => event.preventDefault());
       initTheme();
     </script>
   </body>
