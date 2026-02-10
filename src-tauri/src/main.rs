@@ -497,8 +497,12 @@ fn main() {
         startup_log("window close requested");
       } else if let WindowEvent::Resized(size) = event {
         track_last_size(*size);
-        resize_login_to_window(&window.app_handle());
-        resize_projector_to_window(&window.app_handle(), &window.state::<Mutex<AppState>>());
+        let state = window.state::<Mutex<AppState>>();
+        let should_resize_login = with_state(&state, |s| s.projector.is_none());
+        if should_resize_login {
+          resize_login_to_window(&window.app_handle());
+        }
+        resize_projector_to_window(&window.app_handle(), &state);
       }
     })
     .invoke_handler(tauri::generate_handler![

@@ -64,6 +64,7 @@ pub struct AppState {
   pub swf_url: Option<String>,
   pub capture_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
   pub projector: Option<ProjectorHandle>,
+  pub last_projector_rect: Option<(i32, i32, i32, i32)>,
 }
 
 impl AppState {
@@ -75,6 +76,7 @@ impl AppState {
       swf_url: None,
       capture_stop: None,
       projector: None,
+      last_projector_rect: None,
     }
   }
 }

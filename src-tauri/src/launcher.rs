@@ -72,6 +72,7 @@ pub fn stop_projector(state: &State<Mutex<AppState>>) {
     }
     s.status = AppStatus::Login;
     s.message = None;
+    s.last_projector_rect = None;
   });
 }
 
@@ -152,6 +153,7 @@ pub fn launch_projector_auto(app: &AppHandle, state: &State<Mutex<AppState>>) ->
     });
     s.status = AppStatus::Running;
     s.message = None;
+    s.last_projector_rect = None;
   });
   emit_status(app, &state.lock().expect("state lock"));
 
@@ -182,26 +184,46 @@ fn schedule_projector_fit(app: AppHandle) {
 }
 
 pub fn resize_projector_to_window(app: &AppHandle, state: &State<Mutex<AppState>>) {
-  let projector = with_state(state, |s| s.projector.as_ref().map(|p| p.hwnd));
-  if let Some(hwnd) = projector {
-    if let Ok(parent) = main_hwnd(app) {
-      if let Some((w, h)) = parent_client_size(parent) {
-        let scale = main_window_scale(app);
-        let bar_h = ((UI_BAR_HEIGHT as f64) * scale).round() as i32;
-        let usable_h = (h - bar_h).max(1);
-        move_child(HWND(hwnd as *mut std::ffi::c_void), 0, bar_h, w, usable_h);
-        bring_to_top(HWND(hwnd as *mut std::ffi::c_void));
-        return;
-      }
+  let (projector, last_rect) = with_state(state, |s| {
+    (s.projector.as_ref().map(|p| p.hwnd), s.last_projector_rect)
+  });
+  let Some(hwnd) = projector else {
+    return;
+  };
+
+  let rect = if let Ok(parent) = main_hwnd(app) {
+    if let Some((w, h)) = parent_client_size(parent) {
+      let scale = main_window_scale(app);
+      let bar_h = ((UI_BAR_HEIGHT as f64) * scale).round() as i32;
+      let usable_h = (h - bar_h).max(1);
+      Some((0, bar_h, w, usable_h))
+    } else {
+      None
     }
-    if let Ok(size) = main_window_size_physical(app) {
+  } else {
+    None
+  }
+  .or_else(|| {
+    main_window_size_physical(app).ok().map(|size| {
       let scale = main_window_scale(app);
       let bar_h = ((UI_BAR_HEIGHT as f64) * scale).round() as i32;
       let usable_h = (size.height as i32 - bar_h).max(1);
-      move_child(HWND(hwnd as *mut std::ffi::c_void), 0, bar_h, size.width as i32, usable_h);
-      bring_to_top(HWND(hwnd as *mut std::ffi::c_void));
-    }
+      (0, bar_h, size.width as i32, usable_h)
+    })
+  });
+
+  let Some((x, y, w, h)) = rect else {
+    return;
+  };
+  if Some((x, y, w, h)) == last_rect {
+    return;
   }
+
+  move_child(HWND(hwnd as *mut std::ffi::c_void), x, y, w, h);
+  bring_to_top(HWND(hwnd as *mut std::ffi::c_void));
+  with_state(state, |s| {
+    s.last_projector_rect = Some((x, y, w, h));
+  });
 }
 
 pub fn resize_login_to_window(app: &AppHandle) {
