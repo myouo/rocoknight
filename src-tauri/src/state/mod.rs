@@ -1,3 +1,6 @@
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::HANDLE;
+#[cfg(not(target_os = "windows"))]
 use std::process::Child;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -34,9 +37,24 @@ pub struct StatusPayload {
 }
 
 pub struct ProjectorHandle {
-  pub child: Child,
+  pub process: ProjectorProcess,
   pub hwnd: isize,
   pub original_style: isize,
+}
+
+#[cfg(target_os = "windows")]
+pub struct ProjectorProcess {
+  pub handle: HANDLE,
+  pub pid: u32,
+}
+
+#[cfg(target_os = "windows")]
+unsafe impl Send for ProjectorProcess {}
+
+#[cfg(not(target_os = "windows"))]
+pub struct ProjectorProcess {
+  pub child: Child,
+  pub pid: u32,
 }
 
 pub struct AppState {

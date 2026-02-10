@@ -10,6 +10,7 @@ use crate::embed_win32::{
   bring_to_top,
   detach_child,
   find_window_by_pid,
+  hide_window,
   move_child,
   parent_client_size,
 };
@@ -67,7 +68,7 @@ pub fn stop_projector(state: &State<Mutex<AppState>>) {
   with_state(state, |s| {
     if let Some(mut projector) = s.projector.take() {
       detach_child(HWND(projector.hwnd as *mut std::ffi::c_void), projector.original_style);
-      kill_projector(&mut projector.child);
+      kill_projector(&mut projector.process);
     }
     s.status = AppStatus::Login;
     s.message = None;
@@ -95,14 +96,14 @@ pub fn launch_projector_auto(app: &AppHandle, state: &State<Mutex<AppState>>) ->
       return Err(msg);
     }
   };
-  let child = match crate::projector::launch_projector(&projector_path, &swf_url) {
-    Ok(child) => child,
+  let process = match crate::projector::launch_projector(&projector_path, &swf_url) {
+    Ok(process) => process,
     Err(msg) => {
       set_error(app, state, msg.clone());
       return Err(msg);
     }
   };
-  let pid = child.id();
+  let pid = process.pid;
 
   let child_hwnd = match find_window_by_pid(pid, 6000) {
     Ok(hwnd) => hwnd,
@@ -111,6 +112,7 @@ pub fn launch_projector_auto(app: &AppHandle, state: &State<Mutex<AppState>>) ->
       return Err(msg);
     }
   };
+  hide_window(child_hwnd);
   let main_hwnd = match main_hwnd(app) {
     Ok(hwnd) => hwnd,
     Err(msg) => {
@@ -144,7 +146,7 @@ pub fn launch_projector_auto(app: &AppHandle, state: &State<Mutex<AppState>>) ->
 
   with_state(state, |s| {
     s.projector = Some(ProjectorHandle {
-      child,
+      process,
       hwnd: child_hwnd.0 as isize,
       original_style,
     });

@@ -6,10 +6,9 @@ mod win {
   use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
   use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClientRect, GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId,
-    IsWindowVisible, MoveWindow, SetParent, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, GW_OWNER,
-    HWND_TOP, SWP_FRAMECHANGED,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WS_CHILD, WS_MAXIMIZEBOX,
-    WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SIZEBOX, WS_VISIBLE,
+    IsWindowVisible, MoveWindow, SetParent, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_STYLE,
+    GW_OWNER, HWND_TOP, SW_HIDE, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SWP_SHOWWINDOW, WS_CHILD, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SIZEBOX, WS_VISIBLE,
   };
   use windows::Win32::Foundation::RECT;
 
@@ -27,7 +26,11 @@ mod win {
       return BOOL(1);
     }
     let owner = GetWindow(hwnd, GW_OWNER).unwrap_or(HWND(std::ptr::null_mut()));
-    if IsWindowVisible(hwnd).as_bool() && owner.0.is_null() {
+    if owner.0.is_null() && IsWindowVisible(hwnd).as_bool() {
+      data.hwnd = hwnd;
+      return BOOL(0);
+    }
+    if owner.0.is_null() {
       data.hwnd = hwnd;
       return BOOL(0);
     }
@@ -143,6 +146,12 @@ mod win {
       );
     }
   }
+
+  pub fn hide_window(child_hwnd: HWND) {
+    unsafe {
+      let _ = ShowWindow(child_hwnd, SW_HIDE);
+    }
+  }
 }
 
 #[cfg(target_os = "windows")]
@@ -175,6 +184,8 @@ mod non_win {
   }
 
   pub fn bring_to_top(_child_hwnd: HWND) {}
+
+  pub fn hide_window(_child_hwnd: HWND) {}
 }
 
 #[cfg(not(target_os = "windows"))]

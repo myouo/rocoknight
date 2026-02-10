@@ -1,11 +1,18 @@
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+#[cfg(not(target_os = "windows"))]
+use std::process::{Command, Stdio};
+#[cfg(target_os = "windows")]
+use std::ffi::OsStr;
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
 
 use tauri::{AppHandle, Manager};
 use tauri::path::BaseDirectory;
 use tracing::{error, info};
 use url::Url;
+
+use crate::state::ProjectorProcess;
 
 pub fn resolve_projector_path(app: &AppHandle) -> Result<PathBuf, String> {
   let resolved = app
@@ -54,9 +61,67 @@ pub fn resolve_projector_path(app: &AppHandle) -> Result<PathBuf, String> {
   ))
 }
 
-pub fn launch_projector(path: &PathBuf, swf_url: &str) -> Result<Child, String> {
+#[cfg(target_os = "windows")]
+pub fn launch_projector(path: &PathBuf, swf_url: &str) -> Result<ProjectorProcess, String> {
+  use windows::core::{PCWSTR, PWSTR};
+  use windows::Win32::Foundation::CloseHandle;
+  use windows::Win32::System::Threading::{
+    CreateProcessW, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTUPINFOW,
+    CREATE_NO_WINDOW, STARTF_USESHOWWINDOW,
+  };
+  use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
   info!("launching projector: {} {}", path.display(), sanitize_url_for_log(swf_url));
-  let child = Command::new(path)
+
+  let app_w: Vec<u16> = OsStr::new(path)
+    .encode_wide()
+    .chain(std::iter::once(0))
+    .collect();
+  let cmd = format!("\"{}\" {}", path.display(), swf_url);
+  let mut cmd_w: Vec<u16> = OsStr::new(&cmd)
+    .encode_wide()
+    .chain(std::iter::once(0))
+    .collect();
+
+  let mut si = STARTUPINFOW::default();
+  si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+  si.dwFlags = STARTF_USESHOWWINDOW;
+  si.wShowWindow = SW_HIDE.0 as u16;
+
+  let mut pi = PROCESS_INFORMATION::default();
+  let launch_result = unsafe {
+    CreateProcessW(
+      PCWSTR(app_w.as_ptr()),
+      Some(PWSTR(cmd_w.as_mut_ptr())),
+      None,
+      None,
+      false,
+      PROCESS_CREATION_FLAGS(CREATE_NO_WINDOW.0),
+      None,
+      PCWSTR::null(),
+      &si,
+      &mut pi,
+    )
+  };
+  if let Err(err) = launch_result {
+    error!("launch projector failed: CreateProcessW: {err}");
+    return Err("Failed to launch projector.".to_string());
+  }
+
+  unsafe {
+    let _ = CloseHandle(pi.hThread);
+  }
+
+  Ok(ProjectorProcess {
+    handle: pi.hProcess,
+    pid: pi.dwProcessId,
+  })
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn launch_projector(path: &PathBuf, swf_url: &str) -> Result<ProjectorProcess, String> {
+  info!("launching projector: {} {}", path.display(), sanitize_url_for_log(swf_url));
+  let mut child = Command::new(path)
     .arg(swf_url)
     .stdin(Stdio::null())
     .stdout(Stdio::null())
@@ -66,12 +131,24 @@ pub fn launch_projector(path: &PathBuf, swf_url: &str) -> Result<Child, String> 
       error!("launch projector failed: {err}");
       "Failed to launch projector.".to_string()
     })?;
-  Ok(child)
+  let pid = child.id();
+  Ok(ProjectorProcess { child, pid })
 }
 
-pub fn stop_projector(child: &mut Child) {
-  let _ = child.kill();
-  let _ = child.wait();
+#[cfg(target_os = "windows")]
+pub fn stop_projector(process: &mut ProjectorProcess) {
+  use windows::Win32::Foundation::CloseHandle;
+  use windows::Win32::System::Threading::TerminateProcess;
+  unsafe {
+    let _ = TerminateProcess(process.handle, 1);
+    let _ = CloseHandle(process.handle);
+  }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn stop_projector(process: &mut ProjectorProcess) {
+  let _ = process.child.kill();
+  let _ = process.child.wait();
 }
 
 fn sanitize_url_for_log(url: &str) -> String {
