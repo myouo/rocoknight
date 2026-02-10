@@ -4,3 +4,4 @@ node_modules/
 /assets/game.swf
 /vendor/ruffle/
 target/
+logs/
