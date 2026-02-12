@@ -182,7 +182,15 @@ pub fn push_log(event: LogEvent) {
         return;
     };
 
-    let mut state = bus.lock().expect("log bus lock");
+    // 使用 lock() 并处理 poison 错误，避免 panic
+    let mut state = match bus.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            // Mutex 被 poisoned，但我们仍然可以使用数据
+            eprintln!("[LogBus] Mutex poisoned, recovering...");
+            poisoned.into_inner()
+        }
+    };
 
     // 更新统计
     state.stats.total_received += 1;
@@ -226,7 +234,13 @@ pub fn set_window_open(open: bool) {
         return;
     };
 
-    let mut state = bus.lock().expect("log bus lock");
+    let mut state = match bus.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            eprintln!("[LogBus] Mutex poisoned in set_window_open, recovering...");
+            poisoned.into_inner()
+        }
+    };
     let was_open = state.window_open;
     state.window_open = open;
 
@@ -247,7 +261,11 @@ pub fn set_window_open(open: bool) {
 pub fn is_window_open() -> bool {
     LOG_BUS
         .get()
-        .map(|bus| bus.lock().expect("log bus lock").window_open)
+        .and_then(|bus| {
+            bus.lock()
+                .ok()
+                .map(|state| state.window_open)
+        })
         .unwrap_or(false)
 }
 
@@ -255,10 +273,36 @@ pub fn is_window_open() -> bool {
 pub fn get_stats() -> LogBusStats {
     LOG_BUS
         .get()
-        .map(|bus| {
-            let mut state = bus.lock().expect("log bus lock");
-            state.update_stats();
-            state.stats.clone()
+        .and_then(|bus| {
+            bus.lock()
+                .ok()
+                .map(|mut state| {
+                    state.update_stats();
+                    state.stats.clone()
+                })
+        })
+        .unwrap_or_default()
+}
+
+/// 获取最近的 N 条历史日志（用于 debug 窗口初次打开）
+pub fn get_recent_logs(limit: usize) -> Vec<LogEvent> {
+    LOG_BUS
+        .get()
+        .and_then(|bus| {
+            bus.lock()
+                .ok()
+                .map(|state| {
+                    let count = state.ring_buffer.len().min(limit);
+                    state.ring_buffer
+                        .iter()
+                        .rev()  // 最新的在前
+                        .take(count)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()  // 恢复时间顺序
+                        .collect()
+                })
         })
         .unwrap_or_default()
 }
@@ -279,7 +323,13 @@ fn flush_loop() {
         };
 
         let (batch, stats): (Vec<LogEvent>, LogBusStats) = {
-            let mut state = bus.lock().expect("log bus lock");
+            let mut state = match bus.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    eprintln!("[LogBus] Mutex poisoned in flush_loop, recovering...");
+                    poisoned.into_inner()
+                }
+            };
 
             if state.queue.is_empty() {
                 continue;
@@ -366,5 +416,30 @@ macro_rules! bus_info {
 macro_rules! bus_debug {
     ($($arg:tt)*) => {
         $crate::bus_log!("DEBUG", module_path!(), $($arg)*)
+    };
+}
+
+// ============================================================================
+// dbglog! 宏（统一接口，推荐使用）
+// ============================================================================
+
+/// 统一的 debug 日志宏（推荐使用）
+/// 用法：dbglog!(INFO, "message"); dbglog!(ERROR, "error: {}", err);
+#[macro_export]
+macro_rules! dbglog {
+    (TRACE, $($arg:tt)*) => {
+        $crate::bus_log!("TRACE", module_path!(), $($arg)*)
+    };
+    (DEBUG, $($arg:tt)*) => {
+        $crate::bus_log!("DEBUG", module_path!(), $($arg)*)
+    };
+    (INFO, $($arg:tt)*) => {
+        $crate::bus_log!("INFO", module_path!(), $($arg)*)
+    };
+    (WARN, $($arg:tt)*) => {
+        $crate::bus_log!("WARN", module_path!(), $($arg)*)
+    };
+    (ERROR, $($arg:tt)*) => {
+        $crate::bus_log!("ERROR", module_path!(), $($arg)*)
     };
 }

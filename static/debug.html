@@ -384,6 +384,17 @@
         statsEl.textContent = `速率: ${stats.log_rate_per_sec.toFixed(1)}/s | 队列: ${stats.queue_length} | 丢弃: ${stats.total_dropped}`;
       });
 
+      // 初次打开时拉取历史日志
+      async function loadHistoryLogs() {
+        const history = await invoke("debug_get_recent_logs", { limit: 500 });
+        if (history && Array.isArray(history)) {
+          addLogEntries(history);
+        }
+      }
+
+      // 初始化
+      loadHistoryLogs();
+
       addLogEntries([{
         timestamp: Date.now(),
         level: "INFO",

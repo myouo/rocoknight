@@ -467,53 +467,116 @@ fn reset_to_login(app: AppHandle, state: State<Mutex<AppState>>) -> Result<(), S
 
 #[tauri::command]
 fn toggle_debug_window(app: AppHandle) -> Result<bool, String> {
-  // 诊断点 1：函数入口
-  startup_log("TOGGLE_ENTERED");
+  // 重入保护：防止并发调用
+  static TOGGLE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+  let lock = TOGGLE_LOCK.get_or_init(|| std::sync::Mutex::new(()));
 
-  // 诊断点 2：检查窗口是否存在
-  let window = match app.get_webview_window("debug") {
-    Some(w) => w,
-    None => {
-      startup_log("TOGGLE_ERROR: get_webview_window returned None");
-      return Err("Debug window is not initialized.".to_string());
+  // 尝试获取锁，如果失败说明正在执行
+  let _guard = match lock.try_lock() {
+    Ok(g) => g,
+    Err(_) => {
+      startup_log("TOGGLE_REENTRY: already running, skipping");
+      return Err("Toggle already in progress".to_string());
     }
   };
 
-  let is_visible = window.is_visible().unwrap_or(false);
-  let new_state = !is_visible;
+  // 使用 catch_unwind 捕获 panic，防止程序崩溃
+  let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    // T0: 函数入口
+    startup_log("TOGGLE_T0: entered");
 
-  // 异步执行窗口操作，避免阻塞
-  let window_clone = window.clone();
-  std::thread::spawn(move || {
-    if new_state {
-      // 诊断点 3：记录 show 结果
-      match window_clone.show() {
-        Ok(_) => {
-          startup_log("TOGGLE_SHOW: Ok");
-          let _ = window_clone.set_focus();
-        }
-        Err(e) => {
-          startup_log(&format!("TOGGLE_SHOW: Err({:?})", e));
-        }
+    // T1: 检查窗口是否存在
+    let window = match app.get_webview_window("debug") {
+      Some(w) => {
+        startup_log("TOGGLE_T1: got window (Some)");
+        w
       }
-      debug::set_debug_window_state(true);
-      debug_log_bus::set_window_open(true);
-    } else {
-      // 诊断点 3：记录 hide 结果
-      match window_clone.hide() {
-        Ok(_) => {
-          startup_log("TOGGLE_HIDE: Ok");
-        }
-        Err(e) => {
-          startup_log(&format!("TOGGLE_HIDE: Err({:?})", e));
-        }
+      None => {
+        startup_log("TOGGLE_T1: got window (None)");
+        return Err("Debug window is not initialized.".to_string());
       }
-      debug::set_debug_window_state(false);
-      debug_log_bus::set_window_open(false);
+    };
+
+    // T2: 获取可见状态
+    let is_visible = match window.is_visible() {
+      Ok(v) => {
+        startup_log(&format!("TOGGLE_T2: is_visible Ok({})", v));
+        v
+      }
+      Err(e) => {
+        startup_log(&format!("TOGGLE_T2: is_visible Err({:?})", e));
+        false
+      }
+    };
+
+    // T3: 计算新状态
+    let new_state = !is_visible;
+    startup_log(&format!("TOGGLE_T3: new_state={}", new_state));
+
+    // T4: 准备执行窗口操作
+    startup_log("TOGGLE_T4: before spawn");
+
+    // 异步执行窗口操作
+    let window_clone = window.clone();
+    std::thread::spawn(move || {
+      startup_log("TOGGLE_T4.1: inside spawn");
+
+      if new_state {
+        // T5: 执行 show
+        startup_log("TOGGLE_T5: calling show");
+        match window_clone.show() {
+          Ok(_) => {
+            startup_log("TOGGLE_SHOW: Ok");
+            let _ = window_clone.set_focus();
+          }
+          Err(e) => {
+            startup_log(&format!("TOGGLE_SHOW: Err({:?})", e));
+          }
+        }
+        // T6: 更新状态
+        startup_log("TOGGLE_T6: updating state (show)");
+        debug::set_debug_window_state(true);
+        debug_log_bus::set_window_open(true);
+      } else {
+        // T5: 执行 hide
+        startup_log("TOGGLE_T5: calling hide");
+        match window_clone.hide() {
+          Ok(_) => {
+            startup_log("TOGGLE_HIDE: Ok");
+          }
+          Err(e) => {
+            startup_log(&format!("TOGGLE_HIDE: Err({:?})", e));
+          }
+        }
+        // T6: 更新状态
+        startup_log("TOGGLE_T6: updating state (hide)");
+        debug::set_debug_window_state(false);
+        debug_log_bus::set_window_open(false);
+      }
+
+      startup_log("TOGGLE_T7: spawn completed");
+    });
+
+    // T7: 返回
+    startup_log(&format!("TOGGLE_T7: returning {}", new_state));
+    Ok(new_state)
+  }));
+
+  // 处理 panic
+  match result {
+    Ok(r) => r,
+    Err(panic_info) => {
+      let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+        s.to_string()
+      } else if let Some(s) = panic_info.downcast_ref::<String>() {
+        s.clone()
+      } else {
+        "Unknown panic".to_string()
+      };
+      startup_log(&format!("TOGGLE_PANIC: {}", panic_msg));
+      Err(format!("Panic in toggle_debug_window: {}", panic_msg))
     }
-  });
-
-  Ok(new_state)
+  }
 }
 
 #[tauri::command]
@@ -527,6 +590,11 @@ fn debug_log(app: AppHandle, level: String, message: String) {
 #[tauri::command]
 fn get_debug_stats() -> debug_log_bus::LogBusStats {
   debug_log_bus::get_stats()
+}
+
+#[tauri::command]
+fn debug_get_recent_logs(limit: usize) -> Vec<debug_log_bus::LogEvent> {
+  debug_log_bus::get_recent_logs(limit)
 }
 
 // main window helpers moved to launcher.rs
@@ -617,6 +685,9 @@ fn main() {
   // 🔴 验证标记：如果看到这行，说明是新编译的版本
   startup_log("🔴🔴🔴 VERSION: 2026-02-12-PATCH-V2 🔴🔴🔴");
 
+  // [日志点 1] 应用启动
+  dbglog!(INFO, "Application starting...");
+
   show_boot_message("A: main entered");
 
   let context = tauri::generate_context!();
@@ -625,6 +696,8 @@ fn main() {
   let app_result = tauri::Builder::default()
     .manage(Mutex::new(AppState::new()))
     .setup(|app| {
+      // [日志点 2] Setup 开始
+      dbglog!(INFO, "Setup phase started");
       show_boot_message("C: setup entered");
       app
         .handle()
@@ -746,6 +819,8 @@ fn main() {
       // Pre-create debug window hidden. Toolbar only controls show/hide.
       let setup_app_handle = app.handle().clone();
       startup_log("DEBUG_WINDOW_CREATE: Starting");
+      // [日志点 3] Debug 窗口创建开始
+      dbglog!(INFO, "Creating debug window...");
       let debug_window = tauri::WebviewWindowBuilder::new(
         &setup_app_handle,
         "debug",
@@ -759,15 +834,21 @@ fn main() {
       .build()
       .map_err(|e| {
         startup_log(&format!("DEBUG_WINDOW_CREATE: Err({:?})", e));
+        // [日志点 4] Debug 窗口创建失败
+        dbglog!(ERROR, "Failed to create debug window: {:?}", e);
         format!("Failed to create debug window: {}", e)
       })?;
       startup_log("DEBUG_WINDOW_CREATE: Ok");
+      // [日志点 5] Debug 窗口创建成功
+      dbglog!(INFO, "Debug window created successfully");
       debug::set_debug_window_state(false);
 
       let debug_window_for_events = debug_window.clone();
       debug_window.on_window_event(move |event| {
         match event {
           tauri::WindowEvent::CloseRequested { api, .. } => {
+            // [日志点 6] Debug 窗口关闭请求
+            dbglog!(INFO, "Debug window close requested");
             info!("[debug][EVENT] CloseRequested triggered");
             api.prevent_close();
 
@@ -785,6 +866,8 @@ fn main() {
             info!("[debug][EVENT] CloseRequested handled");
           }
           tauri::WindowEvent::Destroyed => {
+            // [日志点 7] Debug 窗口被销毁（不应该发生）
+            dbglog!(ERROR, "⚠️ Debug window destroyed unexpectedly!");
             error!("[debug][EVENT] ⚠️ Destroyed event triggered (窗口被销毁！)");
             debug::set_debug_window_state(false);
             debug_log_bus::set_window_open(false);
@@ -850,7 +933,8 @@ fn main() {
       reset_to_login,
       toggle_debug_window,
       debug_log,
-      get_debug_stats
+      get_debug_stats,
+      debug_get_recent_logs
     ])
     .run(context);
 
