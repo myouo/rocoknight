@@ -189,12 +189,22 @@ pub fn push_log(event: LogEvent) {
         return;
     };
 
-    // 使用 lock() 并处理 poison 错误，避免 panic
-    let mut state = match bus.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            // Mutex 被 poisoned，但我们仍然可以使用数据
-            eprintln!("[LogBus] Mutex poisoned, recovering...");
+    // 锁诊断：尝试获取锁
+    crate::request_context::cmd_log("BUS_LOCK_TRY push_log");
+
+    // 使用 try_lock 避免阻塞，如果锁忙就丢弃日志
+    let mut state = match bus.try_lock() {
+        Ok(guard) => {
+            crate::request_context::cmd_log("BUS_LOCK_OK push_log");
+            guard
+        }
+        Err(std::sync::TryLockError::WouldBlock) => {
+            // 锁被占用，丢弃日志，不阻塞调用者
+            crate::request_context::cmd_log("BUS_LOCK_BUSY push_log (dropping log)");
+            return;
+        }
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+            crate::request_context::cmd_log("BUS_LOCK_POISONED push_log (recovering)");
             poisoned.into_inner()
         }
     };

@@ -1,4 +1,6 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::io::Write;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::SystemTime;
 use tracing::{info_span, Span};
 
 /// 全局 request_id 计数器（简单递增，避免 UUID 开销）
@@ -175,4 +177,70 @@ impl Drop for StageTimer {
 
         tracing::info!(duration_ms = duration_ms, "stage completed");
     }
+}
+
+/// 全局命令序列号（用于 startup_log 风格的诊断）
+static CMD_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+/// 写入命令日志到文件（不依赖 tracing，避免循环依赖）
+pub fn cmd_log(message: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            let path = std::path::PathBuf::from(local)
+                .join("RocoKnight")
+                .join("logs")
+                .join("rocoknight.log");
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                let _ = writeln!(file, "[{:?}] {}", SystemTime::now(), message);
+            }
+        }
+    }
+}
+
+/// 命令诊断包装器（捕获 panic，记录进入/退出）
+pub fn wrap_command<F, R>(name: &'static str, warn_ms: u64, f: F) -> Result<R, String>
+where
+    F: FnOnce() -> Result<R, String>,
+{
+    let seq = CMD_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let start = std::time::Instant::now();
+
+    cmd_log(&format!("CMD_ENTER name={} seq={}", name, seq));
+
+    let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(result) => result,
+        Err(panic_info) => {
+            let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic".to_string()
+            };
+
+            cmd_log(&format!("CMD_PANIC name={} seq={} panic={}", name, seq, panic_msg));
+            Err(format!("Command panicked: {}", panic_msg))
+        }
+    };
+
+    let elapsed_ms = start.elapsed().as_millis();
+    match &result {
+        Ok(_) => {
+            if elapsed_ms > warn_ms as u128 {
+                cmd_log(&format!("CMD_EXIT name={} seq={} elapsed={}ms SLOW ok=true", name, seq, elapsed_ms));
+            } else {
+                cmd_log(&format!("CMD_EXIT name={} seq={} elapsed={}ms ok=true", name, seq, elapsed_ms));
+            }
+        }
+        Err(e) => {
+            cmd_log(&format!("CMD_EXIT name={} seq={} elapsed={}ms ok=false err={}", name, seq, elapsed_ms, e));
+        }
+    }
+
+    result
 }

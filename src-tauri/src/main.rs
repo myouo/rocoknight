@@ -267,32 +267,36 @@ fn set_theme_mode(
     state: State<Mutex<AppState>>,
     theme: String,
 ) -> Result<String, String> {
-    let mode = parse_theme_mode(&theme)
-        .ok_or_else(|| "Invalid theme. Use 'dark' or 'light'.".to_string())?;
-    with_state(&state, |s| {
-        s.theme_mode = mode;
-    });
-    apply_theme_to_app(&app, mode);
-    Ok(mode.as_str().to_string())
+    request_context::wrap_command("set_theme_mode", 200, || {
+        let mode = parse_theme_mode(&theme)
+            .ok_or_else(|| "Invalid theme. Use 'dark' or 'light'.".to_string())?;
+        with_state(&state, |s| {
+            s.theme_mode = mode;
+        });
+        apply_theme_to_app(&app, mode);
+        Ok(mode.as_str().to_string())
+    })
 }
 
 #[tauri::command]
 fn start_login3_capture(app: AppHandle, state: State<Mutex<AppState>>) -> Result<(), String> {
-    let _timer = request_context::CommandTimer::new("start_login3_capture", 500);
+    request_context::wrap_command("start_login3_capture", 500, || {
+        let _timer = request_context::CommandTimer::new("start_login3_capture", 500);
 
-    tracing::info!("command invoked");
-    startup_log("start_login3_capture");
+        tracing::info!("command invoked");
+        startup_log("start_login3_capture");
 
-    match login3_capture::start(app, state) {
-        Ok(()) => {
-            tracing::info!("capture started successfully");
-            Ok(())
+        match login3_capture::start(app, state) {
+            Ok(()) => {
+                tracing::info!("capture started successfully");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "capture start failed");
+                Err(e)
+            }
         }
-        Err(e) => {
-            tracing::error!(error = %e, "capture start failed");
-            Err(e)
-        }
-    }
+    })
 }
 
 #[tauri::command]
@@ -309,26 +313,28 @@ fn launch_projector(
     state: State<Mutex<AppState>>,
     rect: Rect,
 ) -> Result<(), String> {
-    let _timer = request_context::CommandTimer::new("launch_projector", 2000);
+    request_context::wrap_command("launch_projector", 2000, || {
+        let _timer = request_context::CommandTimer::new("launch_projector", 2000);
 
-    let swf_url = with_state(&state, |s| s.swf_url.clone());
-    tracing::info!(
-        has_swf_url = swf_url.is_some(),
-        rect_w = rect.w,
-        rect_h = rect.h,
-        "command invoked"
-    );
+        let swf_url = with_state(&state, |s| s.swf_url.clone());
+        tracing::info!(
+            has_swf_url = swf_url.is_some(),
+            rect_w = rect.w,
+            rect_h = rect.h,
+            "command invoked"
+        );
 
-    match crate::launcher::launch_projector_auto(&app, &state) {
-        Ok(()) => {
-            tracing::info!("projector launched successfully");
-            Ok(())
+        match crate::launcher::launch_projector_auto(&app, &state) {
+            Ok(()) => {
+                tracing::info!("projector launched successfully");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "projector launch failed");
+                Err(e)
+            }
         }
-        Err(e) => {
-            tracing::error!(error = %e, "projector launch failed");
-            Err(e)
-        }
-    }
+    })
 }
 
 #[tauri::command]
@@ -376,7 +382,8 @@ fn restart_projector(
 
 #[tauri::command]
 fn change_channel(app: AppHandle, state: State<Mutex<AppState>>) -> Result<(), String> {
-    let _timer = request_context::CommandTimer::new("change_channel", 2000);
+    request_context::wrap_command("change_channel", 2000, || {
+        let _timer = request_context::CommandTimer::new("change_channel", 2000);
 
     // 阶段 1：验证状态
     let (has_projector, has_swf) = {
@@ -416,14 +423,16 @@ fn change_channel(app: AppHandle, state: State<Mutex<AppState>>) -> Result<(), S
 
     tracing::info!("channel changed successfully");
     Ok(())
+    })
 }
 
 #[tauri::command]
 fn reset_to_login(app: AppHandle, state: State<Mutex<AppState>>) -> Result<(), String> {
-    let _timer = request_context::CommandTimer::new("reset_to_login", 1000);
+    request_context::wrap_command("reset_to_login", 1000, || {
+        let _timer = request_context::CommandTimer::new("reset_to_login", 1000);
 
-    let current_status = with_state(&state, |s| s.status.clone());
-    tracing::info!(current_status = ?current_status, "command invoked");
+        let current_status = with_state(&state, |s| s.status.clone());
+        tracing::info!(current_status = ?current_status, "command invoked");
 
     // 阶段 1：停止投影器
     {
@@ -508,155 +517,86 @@ fn reset_to_login(app: AppHandle, state: State<Mutex<AppState>>) -> Result<(), S
 
     tracing::info!("reset to login completed successfully");
     Ok(())
+    })
 }
 
 #[tauri::command]
 fn toggle_debug_window(app: AppHandle) -> Result<bool, String> {
-    // 全局退出标志（用于在退出时拒绝所有 debug 命令）
-    static EXITING_GLOBAL: std::sync::atomic::AtomicBool =
-        std::sync::atomic::AtomicBool::new(false);
-
-    // 如果正在退出，拒绝所有 debug 命令
-    if EXITING.load(std::sync::atomic::Ordering::SeqCst) {
-        startup_log("TOGGLE: REJECTED due to EXITING=true");
-        return Err("Cannot toggle debug window while exiting".to_string());
-    }
-
-    // 重入保护：防止并发调用
-    static TOGGLE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    static DEBUG_OPENED_ONCE: std::sync::atomic::AtomicBool =
-        std::sync::atomic::AtomicBool::new(false);
-
-    let lock = TOGGLE_LOCK.get_or_init(|| std::sync::Mutex::new(()));
-
-    // 尝试获取锁，如果失败说明正在执行
-    let _guard = match lock.try_lock() {
-        Ok(g) => g,
-        Err(_) => {
-            startup_log("TOGGLE_REENTRY: already running, skipping");
-            return Err("Toggle already in progress".to_string());
+    // 使用 wrap_command 包装，自动记录进入/退出和捕获 panic
+    request_context::wrap_command("toggle_debug_window", 200, || {
+        // 如果正在退出，拒绝所有 debug 命令
+        if EXITING.load(std::sync::atomic::Ordering::SeqCst) {
+            startup_log("TOGGLE: REJECTED due to EXITING=true");
+            return Err("Cannot toggle debug window while exiting".to_string());
         }
-    };
 
-    // 使用 catch_unwind 捕获 panic，防止程序崩溃
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // T0: 函数入口
-        startup_log("TOGGLE_T0: entered");
+        // 重入保护：防止并发调用
+        static TOGGLE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        static DEBUG_OPENED_ONCE: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
 
-        // T1: 检查窗口是否存在
-        let window = match app.get_webview_window("debug") {
-            Some(w) => {
-                startup_log("TOGGLE_T1: got window (Some)");
-                w
-            }
-            None => {
-                startup_log("TOGGLE_T1: got window (None)");
-                return Err("Debug window is not initialized.".to_string());
+        let lock = TOGGLE_LOCK.get_or_init(|| std::sync::Mutex::new(()));
+
+        // 尝试获取锁，如果失败说明正在执行
+        let _guard = match lock.try_lock() {
+            Ok(g) => g,
+            Err(_) => {
+                startup_log("TOGGLE_REENTRY: already running, skipping");
+                return Err("Toggle already in progress".to_string());
             }
         };
 
-        // T2: 获取可见状态
-        let is_visible = match window.is_visible() {
-            Ok(v) => {
-                startup_log(&format!("TOGGLE_T2: is_visible Ok({})", v));
-                v
-            }
-            Err(e) => {
-                startup_log(&format!("TOGGLE_T2: is_visible Err({:?})", e));
-                false
-            }
-        };
+        startup_log("TOGGLE_ENTER");
 
-        // T3: 计算新状态
+        // 获取窗口
+        let window = app
+            .get_webview_window("debug")
+            .ok_or_else(|| {
+                startup_log("TOGGLE_ERR: window not found");
+                "Debug window is not initialized.".to_string()
+            })?;
+
+        // 获取可见状态
+        let is_visible = window.is_visible().unwrap_or(false);
         let new_state = !is_visible;
-        startup_log(&format!("TOGGLE_T3: new_state={}", new_state));
+
+        startup_log(&format!("TOGGLE_STATE: visible={} -> {}", is_visible, new_state));
 
         // 标记：第一次打开 debug 窗口
         if new_state && !DEBUG_OPENED_ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            startup_log("TOGGLE_DEBUG_OPENED_ONCE: true (第一次打开 debug 窗口)");
+            startup_log("TOGGLE_FIRST_OPEN");
         }
 
-        // T4: 准备执行窗口操作
-        startup_log("TOGGLE_T4: before spawn");
+        // 🔴 关键修复：在主线程同步执行窗口操作，不使用 spawn
+        // 原因：spawn 线程中的窗口操作可能与主线程的其他操作冲突，导致死锁
+        if new_state {
+            startup_log("TOGGLE_SHOW_START");
+            window.show().map_err(|e| {
+                startup_log(&format!("TOGGLE_SHOW_ERR: {:?}", e));
+                format!("Failed to show debug window: {:?}", e)
+            })?;
+            let _ = window.set_focus();
+            startup_log("TOGGLE_SHOW_OK");
 
-        // 异步执行窗口操作
-        let window_clone = window.clone();
-        std::thread::spawn(move || {
-            startup_log("TOGGLE_T4.1: inside spawn");
+            // 更新状态
+            debug::set_debug_window_state(true);
+            debug_log_bus::set_window_open(true);
+        } else {
+            startup_log("TOGGLE_HIDE_START");
+            window.hide().map_err(|e| {
+                startup_log(&format!("TOGGLE_HIDE_ERR: {:?}", e));
+                format!("Failed to hide debug window: {:?}", e)
+            })?;
+            startup_log("TOGGLE_HIDE_OK");
 
-            // 如果正在退出，不执行窗口操作
-            if EXITING.load(std::sync::atomic::Ordering::SeqCst) {
-                startup_log("TOGGLE: REJECTED in spawn due to EXITING=true");
-                return;
-            }
+            // 更新状态
+            debug::set_debug_window_state(false);
+            debug_log_bus::set_window_open(false);
+        }
 
-            if new_state {
-                // T5: 执行 show
-                startup_log("TOGGLE_T5: calling show");
-                match window_clone.show() {
-                    Ok(_) => {
-                        startup_log("TOGGLE_SHOW: Ok");
-                        match window_clone.set_focus() {
-                            Ok(_) => {}
-                            Err(e) => {
-                                startup_log(&format!("TOGGLE_SET_FOCUS: Err({:?})", e));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        startup_log(&format!("TOGGLE_SHOW: Err({:?})", e));
-                    }
-                }
-                // T6: 更新状态
-                startup_log("TOGGLE_T6: updating state (show)");
-                debug::set_debug_window_state(true);
-
-                // 延迟调用 set_window_open，避免在窗口操作期间触发 emit
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                debug_log_bus::set_window_open(true);
-            } else {
-                // T5: 执行 hide
-                startup_log("TOGGLE_T5: calling hide");
-                match window_clone.hide() {
-                    Ok(_) => {
-                        startup_log("TOGGLE_HIDE: Ok");
-                    }
-                    Err(e) => {
-                        startup_log(&format!("TOGGLE_HIDE: Err({:?})", e));
-                    }
-                }
-                // T6: 更新状态
-                startup_log("TOGGLE_T6: updating state (hide)");
-                debug::set_debug_window_state(false);
-
-                // 延迟调用 set_window_open，避免在窗口操作期间触发 emit
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                debug_log_bus::set_window_open(false);
-            }
-
-            startup_log("TOGGLE_T7: spawn completed");
-        });
-
-        // T7: 返回
-        startup_log(&format!("TOGGLE_T7: returning {}", new_state));
+        startup_log(&format!("TOGGLE_DONE: new_state={}", new_state));
         Ok(new_state)
-    }));
-
-    // 处理 panic
-    match result {
-        Ok(r) => r,
-        Err(panic_info) => {
-            let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-                s.to_string()
-            } else if let Some(s) = panic_info.downcast_ref::<String>() {
-                s.clone()
-            } else {
-                "Unknown panic".to_string()
-            };
-            startup_log(&format!("TOGGLE_PANIC: {}", panic_msg));
-            Err(format!("Panic in toggle_debug_window: {}", panic_msg))
-        }
-    }
+    })
 }
 
 #[tauri::command]
