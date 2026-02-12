@@ -118,7 +118,10 @@
       }
 
       async function toggleDebug() {
-        await invoke("toggle_debug_window");
+        const visible = await invoke("toggle_debug_window");
+        if (visible === null) {
+          console.warn("toggle_debug_window failed");
+        }
       }
 
       document.getElementById("btn-relogin")?.addEventListener("click", relogin);

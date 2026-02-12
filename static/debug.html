@@ -30,9 +30,15 @@
         padding: 8px 12px;
         background: #2d2d30;
         border-bottom: 1px solid #3e3e42;
+      }
+      .header-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
+        margin-bottom: 8px;
+      }
+      .header-row:last-child {
+        margin-bottom: 0;
       }
       .title {
         font-weight: 600;
@@ -41,6 +47,7 @@
       .controls {
         display: flex;
         gap: 8px;
+        align-items: center;
       }
       .btn {
         padding: 4px 12px;
@@ -57,6 +64,39 @@
       .btn:active {
         background: #0d5a8f;
       }
+      .btn.paused {
+        background: #d4a017;
+      }
+      .filter-group {
+        display: flex;
+        gap: 4px;
+      }
+      .filter-btn {
+        padding: 2px 8px;
+        background: #3e3e42;
+        color: #d4d4d4;
+        border: 1px solid #555;
+        border-radius: 2px;
+        cursor: pointer;
+        font-size: 11px;
+      }
+      .filter-btn.active {
+        background: #0e639c;
+        border-color: #0e639c;
+      }
+      .search-box {
+        padding: 4px 8px;
+        background: #3e3e42;
+        border: 1px solid #555;
+        border-radius: 2px;
+        color: #d4d4d4;
+        font-size: 12px;
+        width: 200px;
+      }
+      .stats {
+        font-size: 11px;
+        color: #858585;
+      }
       .content {
         flex: 1;
         overflow-y: auto;
@@ -66,6 +106,9 @@
         padding: 4px 0;
         border-bottom: 1px solid #2d2d30;
         word-wrap: break-word;
+      }
+      .log-entry.hidden {
+        display: none;
       }
       .log-time {
         color: #858585;
@@ -89,6 +132,9 @@
       .log-level.debug {
         color: #569cd6;
       }
+      .log-level.trace {
+        color: #808080;
+      }
       .log-message {
         color: #d4d4d4;
       }
@@ -110,9 +156,29 @@
   <body>
     <div class="container">
       <div class="header">
-        <div class="title">Debug Console</div>
-        <div class="controls">
-          <button class="btn" id="btn-clear">清空</button>
+        <div class="header-row">
+          <div class="title">Debug Console</div>
+          <div class="controls">
+            <button class="btn" id="btn-pause">暂停</button>
+            <button class="btn" id="btn-clear">清空</button>
+            <button class="btn" id="btn-export">导出</button>
+          </div>
+        </div>
+        <div class="header-row">
+          <div class="controls">
+            <span style="font-size: 11px; color: #858585;">级别:</span>
+            <div class="filter-group">
+              <button class="filter-btn active" data-level="error">ERROR</button>
+              <button class="filter-btn active" data-level="warn">WARN</button>
+              <button class="filter-btn active" data-level="info">INFO</button>
+              <button class="filter-btn active" data-level="debug">DEBUG</button>
+              <button class="filter-btn active" data-level="trace">TRACE</button>
+            </div>
+            <input type="text" class="search-box" id="search-box" placeholder="搜索..." />
+          </div>
+          <div class="stats" id="stats">
+            速率: 0/s | 队列: 0 | 丢弃: 0
+          </div>
         </div>
       </div>
       <div class="content" id="log-content"></div>
@@ -120,7 +186,26 @@
     <script>
       const logContent = document.getElementById("log-content");
       const btnClear = document.getElementById("btn-clear");
+      const btnPause = document.getElementById("btn-pause");
+      const btnExport = document.getElementById("btn-export");
+      const searchBox = document.getElementById("search-box");
+      const statsEl = document.getElementById("stats");
+
       let autoScroll = true;
+      let paused = false;
+      const MAX_LOG_ENTRIES = 3000;
+      let logEntries = [];
+      let renderScheduled = false;
+
+      // 过滤状态
+      const levelFilters = {
+        error: true,
+        warn: true,
+        info: true,
+        debug: true,
+        trace: true
+      };
+      let searchQuery = "";
 
       async function invoke(name, payload) {
         const t = window.__TAURI__ || window.__TAURI_INTERNALS__;
@@ -152,7 +237,8 @@
         }
       }
 
-      function formatTime(date) {
+      function formatTime(timestamp) {
+        const date = new Date(timestamp);
         const h = String(date.getHours()).padStart(2, "0");
         const m = String(date.getMinutes()).padStart(2, "0");
         const s = String(date.getSeconds()).padStart(2, "0");
@@ -160,35 +246,122 @@
         return `${h}:${m}:${s}.${ms}`;
       }
 
-      function addLogEntry(level, message) {
-        const entry = document.createElement("div");
-        entry.className = "log-entry";
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
 
-        const time = document.createElement("span");
-        time.className = "log-time";
-        time.textContent = formatTime(new Date());
+      function shouldShowEntry(entry) {
+        // 级别过滤
+        if (!levelFilters[entry.level.toLowerCase()]) {
+          return false;
+        }
 
-        const levelSpan = document.createElement("span");
-        levelSpan.className = `log-level ${level.toLowerCase()}`;
-        levelSpan.textContent = level.toUpperCase();
+        // 搜索过滤
+        if (searchQuery && !entry.message.toLowerCase().includes(searchQuery.toLowerCase())) {
+          return false;
+        }
 
-        const msg = document.createElement("span");
-        msg.className = "log-message";
-        msg.textContent = message;
+        return true;
+      }
 
-        entry.appendChild(time);
-        entry.appendChild(levelSpan);
-        entry.appendChild(msg);
+      function addLogEntries(entries) {
+        if (paused) {
+          return;
+        }
 
-        logContent.appendChild(entry);
+        logEntries.push(...entries);
+
+        if (logEntries.length > MAX_LOG_ENTRIES) {
+          logEntries = logEntries.slice(-MAX_LOG_ENTRIES);
+        }
+
+        if (!renderScheduled) {
+          renderScheduled = true;
+          requestAnimationFrame(() => {
+            renderLogs();
+            renderScheduled = false;
+          });
+        }
+      }
+
+      function renderLogs() {
+        const fragment = document.createDocumentFragment();
+        const visibleEntries = logEntries.slice(-1000);
+
+        for (const entry of visibleEntries) {
+          if (!shouldShowEntry(entry)) {
+            continue;
+          }
+
+          const div = document.createElement("div");
+          div.className = "log-entry";
+
+          const timeStr = formatTime(entry.timestamp);
+
+          const timeSpan = document.createElement("span");
+          timeSpan.className = "log-time";
+          timeSpan.textContent = timeStr;
+
+          const levelSpan = document.createElement("span");
+          levelSpan.className = `log-level ${entry.level.toLowerCase()}`;
+          levelSpan.textContent = entry.level;
+
+          const msgSpan = document.createElement("span");
+          msgSpan.className = "log-message";
+          msgSpan.textContent = entry.message;
+
+          div.appendChild(timeSpan);
+          div.appendChild(levelSpan);
+          div.appendChild(msgSpan);
+          fragment.appendChild(div);
+        }
+
+        logContent.innerHTML = '';
+        logContent.appendChild(fragment);
 
         if (autoScroll) {
           logContent.scrollTop = logContent.scrollHeight;
         }
       }
 
+      function exportLogs() {
+        const data = JSON.stringify(logEntries, null, 2);
+        const blob = new Blob([data], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `debug-logs-${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+
       btnClear.addEventListener("click", () => {
+        logEntries = [];
         logContent.innerHTML = "";
+      });
+
+      btnPause.addEventListener("click", () => {
+        paused = !paused;
+        btnPause.textContent = paused ? "继续" : "暂停";
+        btnPause.classList.toggle("paused", paused);
+      });
+
+      btnExport.addEventListener("click", exportLogs);
+
+      searchBox.addEventListener("input", (e) => {
+        searchQuery = e.target.value;
+        renderLogs();
+      });
+
+      document.querySelectorAll(".filter-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const level = btn.dataset.level;
+          levelFilters[level] = !levelFilters[level];
+          btn.classList.toggle("active", levelFilters[level]);
+          renderLogs();
+        });
       });
 
       logContent.addEventListener("scroll", () => {
@@ -198,12 +371,25 @@
         autoScroll = isAtBottom;
       });
 
-      listen("debug_log", (event) => {
-        const { level, message } = event.payload;
-        addLogEntry(level, message);
+      listen("debug_log_batch", (event) => {
+        addLogEntries(event.payload);
       });
 
-      addLogEntry("info", "Debug console initialized");
+      listen("debug_log", (event) => {
+        addLogEntries([event.payload]);
+      });
+
+      listen("debug_log_stats", (event) => {
+        const stats = event.payload;
+        statsEl.textContent = `速率: ${stats.log_rate_per_sec.toFixed(1)}/s | 队列: ${stats.queue_length} | 丢弃: ${stats.total_dropped}`;
+      });
+
+      addLogEntries([{
+        timestamp: Date.now(),
+        level: "INFO",
+        target: "debug_console",
+        message: "Debug console initialized"
+      }]);
     </script>
   </body>
 </html>

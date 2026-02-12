@@ -95,115 +95,213 @@ pub fn stop_projector(state: &State<Mutex<AppState>>) {
 }
 
 pub fn launch_projector_auto(app: &AppHandle, state: &State<Mutex<AppState>>) -> Result<(), String> {
-  let (swf_url, existing) = with_state(state, |s| (s.swf_url.clone(), s.projector.is_some()));
+  tracing::info!("launch_projector_auto started");
+
+  // 阶段 1：验证状态
+  let (swf_url, existing) = {
+    let _stage = crate::request_context::StageTimer::new("validate_state");
+    let result = with_state(state, |s| (s.swf_url.clone(), s.projector.is_some()));
+    tracing::info!(
+      has_swf_url = result.0.is_some(),
+      has_existing_projector = result.1,
+      "state validated"
+    );
+    result
+  };
+
   if existing {
+    tracing::info!("stopping existing projector");
     stop_projector(state);
   }
+
   let swf_url = match swf_url {
-    Some(url) => url,
+    Some(url) => {
+      tracing::info!(url_len = url.len(), "swf url available");
+      url
+    }
     None => {
       let msg = "Missing main.swf URL.".to_string();
+      tracing::error!("missing swf url");
       set_error(app, state, msg.clone());
       return Err(msg);
     }
   };
 
-  let projector_path = match resolve_projector_path(app) {
-    Ok(path) => path,
-    Err(msg) => {
-      set_error(app, state, msg.clone());
-      return Err(msg);
-    }
-  };
-  let process = match crate::projector::launch_projector(&projector_path, &swf_url) {
-    Ok(process) => process,
-    Err(msg) => {
-      set_error(app, state, msg.clone());
-      return Err(msg);
-    }
-  };
-  let pid = process.pid;
-
-  let child_hwnd = match find_window_by_pid(pid, 6000) {
-    Ok(hwnd) => hwnd,
-    Err(msg) => {
-      set_error(app, state, msg.clone());
-      return Err(msg);
-    }
-  };
-  hide_window(child_hwnd);
-  let main_hwnd = match main_hwnd(app) {
-    Ok(hwnd) => hwnd,
-    Err(msg) => {
-      set_error(app, state, msg.clone());
-      return Err(msg);
-    }
-  };
-  let original_style = match attach_child(child_hwnd, main_hwnd) {
-    Ok(style) => style,
-    Err(msg) => {
-      set_error(app, state, msg.clone());
-      return Err(msg);
+  // 阶段 2：解析投影器路径
+  let projector_path = {
+    let _stage = crate::request_context::StageTimer::new("resolve_path");
+    match resolve_projector_path(app) {
+      Ok(path) => {
+        tracing::info!(path = %path.display(), "projector path resolved");
+        path
+      }
+      Err(msg) => {
+        tracing::error!(error = %msg, "failed to resolve projector path");
+        set_error(app, state, msg.clone());
+        return Err(msg);
+      }
     }
   };
 
-  if let Some((w, h)) = parent_client_size(main_hwnd) {
-    let scale = main_window_scale(app);
-    let bar_h = ((UI_BAR_HEIGHT as f64) * scale).round() as i32;
-    let usable_h = (h - bar_h).max(1);
-    move_child(child_hwnd, 0, bar_h, w, usable_h);
-  } else {
-    let size = main_window_size_physical(app)?;
-    let scale = main_window_scale(app);
-    let bar_h = ((UI_BAR_HEIGHT as f64) * scale).round() as i32;
-    let usable_h = (size.height as i32 - bar_h).max(1);
-    move_child(child_hwnd, 0, bar_h, size.width as i32, usable_h);
+  // 阶段 3：启动进程
+  let (process, pid) = {
+    let _stage = crate::request_context::StageTimer::new("launch_process");
+    match crate::projector::launch_projector(&projector_path, &swf_url) {
+      Ok(process) => {
+        let pid = process.pid;
+        tracing::info!(pid = pid, "process launched");
+        (process, pid)
+      }
+      Err(msg) => {
+        tracing::error!(error = %msg, "failed to launch process");
+        set_error(app, state, msg.clone());
+        return Err(msg);
+      }
+    }
+  };
+
+  // 阶段 4：查找窗口
+  let child_hwnd = {
+    let _stage = crate::request_context::StageTimer::new("find_window");
+    match find_window_by_pid(pid, 6000) {
+      Ok(hwnd) => {
+        tracing::info!(hwnd = hwnd.0 as usize, "window found");
+        hwnd
+      }
+      Err(msg) => {
+        tracing::error!(error = %msg, pid = pid, "failed to find window");
+        set_error(app, state, msg.clone());
+        return Err(msg);
+      }
+    }
+  };
+
+  // 阶段 5：嵌入窗口
+  let original_style = {
+    let _stage = crate::request_context::StageTimer::new("attach_window");
+
+    hide_window(child_hwnd);
+
+    let main_hwnd = match main_hwnd(app) {
+      Ok(hwnd) => hwnd,
+      Err(msg) => {
+        tracing::error!(error = %msg, "failed to get main window handle");
+        set_error(app, state, msg.clone());
+        return Err(msg);
+      }
+    };
+
+    match attach_child(child_hwnd, main_hwnd) {
+      Ok(style) => {
+        tracing::info!(
+          child_hwnd = child_hwnd.0 as usize,
+          parent_hwnd = main_hwnd.0 as usize,
+          "window attached"
+        );
+        style
+      }
+      Err(msg) => {
+        tracing::error!(error = %msg, "failed to attach window");
+        set_error(app, state, msg.clone());
+        return Err(msg);
+      }
+    }
+  };
+
+  // 阶段 6：调整窗口大小
+  {
+    let _stage = crate::request_context::StageTimer::new("resize_window");
+
+    if let Some((w, h)) = parent_client_size(main_hwnd(app).unwrap()) {
+      let scale = main_window_scale(app);
+      let bar_h = ((UI_BAR_HEIGHT as f64) * scale).round() as i32;
+      let usable_h = (h - bar_h).max(1);
+      move_child(child_hwnd, 0, bar_h, w, usable_h);
+      tracing::info!(width = w, height = usable_h, "window resized");
+    } else {
+      let size = main_window_size_physical(app)?;
+      let scale = main_window_scale(app);
+      let bar_h = ((UI_BAR_HEIGHT as f64) * scale).round() as i32;
+      let usable_h = (size.height as i32 - bar_h).max(1);
+      move_child(child_hwnd, 0, bar_h, size.width as i32, usable_h);
+      tracing::info!(width = size.width, height = usable_h, "window resized (fallback)");
+    }
+
+    bring_to_top(child_hwnd);
+    schedule_projector_fit(app.clone());
   }
-  bring_to_top(child_hwnd);
-  info!("[RocoKnight][launcher] projector attached and brought to top");
-  schedule_projector_fit(app.clone());
 
+  // 阶段 7：初始化 WPE
   let qq_num = extract_qq_from_url(&swf_url).unwrap_or(0);
-  info!("[RocoKnight][launcher] extracted QQ number: {}", qq_num);
+  tracing::info!(qq_num = qq_num, "qq number extracted");
 
-  let injector = match PacketInjector::new(pid) {
-    Ok(inj) => Arc::new(inj),
-    Err(e) => {
-      info!("[WPE] Failed to create injector: {}", e);
-      return Err(format!("Failed to create packet injector: {}", e));
+  let _interceptor = {
+    let _stage = crate::request_context::StageTimer::new("init_wpe");
+
+    let _injector = match PacketInjector::new(pid) {
+      Ok(inj) => {
+        tracing::info!("packet injector created");
+        Arc::new(inj)
+      }
+      Err(e) => {
+        tracing::warn!(error = %e, "failed to create packet injector");
+        return Err(format!("Failed to create packet injector: {}", e));
+      }
+    };
+
+    match PacketInterceptor::new(pid) {
+      Ok(int) => {
+        tracing::info!("packet interceptor created");
+        int
+      }
+      Err(e) => {
+        tracing::warn!(error = %e, "failed to create packet interceptor");
+        return Err(format!("Failed to create packet interceptor: {}", e));
+      }
     }
   };
 
-  let interceptor = match PacketInterceptor::new(pid) {
-    Ok(int) => int,
-    Err(e) => {
-      info!("[WPE] Failed to create interceptor: {}", e);
-      return Err(format!("Failed to create packet interceptor: {}", e));
-    }
-  };
+  // 阶段 8：更新状态
+  {
+    let _stage = crate::request_context::StageTimer::new("update_state");
 
-  with_state(state, |s| {
-    s.projector = Some(ProjectorHandle {
-      process,
-      hwnd: child_hwnd.0 as isize,
-      original_style,
+    with_state(state, |s| {
+      tracing::info!(
+        old_status = ?s.status,
+        new_status = ?AppStatus::Running,
+        "state transition"
+      );
+
+      s.projector = Some(ProjectorHandle {
+        process,
+        hwnd: child_hwnd.0 as isize,
+        original_style,
+      });
+      s.status = AppStatus::Running;
+      s.message = None;
+      s.last_projector_rect = None;
+      s.qq_num = Some(qq_num);
+      s.wpe_interceptor = Some(_interceptor);
     });
-    s.status = AppStatus::Running;
-    s.message = None;
-    s.last_projector_rect = None;
-    s.qq_num = Some(qq_num);
-    s.wpe_interceptor = Some(interceptor);
-  });
-  emit_status(app, &state.lock().expect("state lock"));
 
-  if let Some(login) = app.get_webview("login") {
-    let _ = login.hide();
+    emit_status(app, &state.lock().expect("state lock"));
   }
-  if let Some(main) = app.get_webview("main") {
-    let _ = main.hide();
-  }
-  info!("[RocoKnight][launcher] login webview hidden for projector");
 
+  // 阶段 9：隐藏登录窗口
+  {
+    let _stage = crate::request_context::StageTimer::new("hide_login");
+
+    if let Some(login) = app.get_webview("login") {
+      let _ = login.hide();
+      tracing::info!("login webview hidden");
+    }
+    if let Some(main) = app.get_webview("main") {
+      let _ = main.hide();
+      tracing::info!("main webview hidden");
+    }
+  }
+
+  tracing::info!("launch_projector_auto completed successfully");
   Ok(())
 }
 

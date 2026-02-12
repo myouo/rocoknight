@@ -5,7 +5,7 @@ use std::process::Child;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum AppStatus {
   Login,
   Capturing,

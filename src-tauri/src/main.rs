@@ -7,6 +7,10 @@ mod projector;
 mod state;
 mod wpe;
 mod debug;
+mod debug_log_bus;
+mod debug_console_layer;
+mod request_context;
+mod error_handling;
 
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
@@ -232,19 +236,53 @@ fn set_theme_mode(app: AppHandle, state: State<Mutex<AppState>>, theme: String) 
 
 #[tauri::command]
 fn start_login3_capture(app: AppHandle, state: State<Mutex<AppState>>) -> Result<(), String> {
+  let _timer = request_context::CommandTimer::new("start_login3_capture", 500);
+
+  tracing::info!("command invoked");
   startup_log("start_login3_capture");
-  login3_capture::start(app, state)
+
+  match login3_capture::start(app, state) {
+    Ok(()) => {
+      tracing::info!("capture started successfully");
+      Ok(())
+    }
+    Err(e) => {
+      tracing::error!(error = %e, "capture start failed");
+      Err(e)
+    }
+  }
 }
 
 #[tauri::command]
 fn stop_login3_capture(app: AppHandle, state: State<Mutex<AppState>>) {
+  let _timer = request_context::CommandTimer::new("stop_login3_capture", 200);
+  tracing::info!("command invoked");
   login3_capture::stop(app, state);
+  tracing::info!("capture stopped");
 }
 
 #[tauri::command]
 fn launch_projector(app: AppHandle, state: State<Mutex<AppState>>, rect: Rect) -> Result<(), String> {
-  let _ = rect;
-  crate::launcher::launch_projector_auto(&app, &state)
+  let _timer = request_context::CommandTimer::new("launch_projector", 2000);
+
+  let swf_url = with_state(&state, |s| s.swf_url.clone());
+  tracing::info!(
+    has_swf_url = swf_url.is_some(),
+    rect_w = rect.w,
+    rect_h = rect.h,
+    "command invoked"
+  );
+
+  match crate::launcher::launch_projector_auto(&app, &state) {
+    Ok(()) => {
+      tracing::info!("projector launched successfully");
+      Ok(())
+    }
+    Err(e) => {
+      tracing::error!(error = %e, "projector launch failed");
+      Err(e)
+    }
+  }
 }
 
 #[tauri::command]
@@ -259,109 +297,223 @@ fn stop_projector_command(state: &State<Mutex<AppState>>) {
 
 #[tauri::command]
 fn stop_projector(app: AppHandle, state: State<Mutex<AppState>>) {
+  let _timer = request_context::CommandTimer::new("stop_projector", 500);
+  tracing::info!("command invoked");
   stop_projector_command(&state);
   emit_status(&app, &state.lock().expect("state lock"));
+  tracing::info!("projector stopped and status emitted");
 }
 
 #[tauri::command]
 fn restart_projector(app: AppHandle, state: State<Mutex<AppState>>, rect: Rect) -> Result<(), String> {
+  let _timer = request_context::CommandTimer::new("restart_projector", 2000);
+  tracing::info!(rect_w = rect.w, rect_h = rect.h, "command invoked");
+
   stop_projector_command(&state);
-  launch_projector(app, state, rect)
+  tracing::info!("projector stopped");
+
+  match launch_projector(app, state, rect) {
+    Ok(()) => {
+      tracing::info!("projector restarted successfully");
+      Ok(())
+    }
+    Err(e) => {
+      tracing::error!(error = %e, "projector restart failed");
+      Err(e)
+    }
+  }
 }
 
 #[tauri::command]
 fn change_channel(app: AppHandle, state: State<Mutex<AppState>>) -> Result<(), String> {
-  let (has_projector, has_swf) = with_state(&state, |s| (s.projector.is_some(), s.swf_url.is_some()));
+  let _timer = request_context::CommandTimer::new("change_channel", 2000);
+
+  // 阶段 1：验证状态
+  let (has_projector, has_swf) = {
+    let _stage = request_context::StageTimer::new("validate_state");
+    let result = with_state(&state, |s| (s.projector.is_some(), s.swf_url.is_some()));
+    tracing::info!(
+      has_projector = result.0,
+      has_swf = result.1,
+      "state validated"
+    );
+    result
+  };
+
   if !has_projector {
-    info!("[RocoKnight][channel] projector not running; fallback to relogin");
+    tracing::warn!("projector not running, fallback to relogin");
     return reset_to_login(app, state);
   }
+
   if !has_swf {
+    tracing::error!("missing swf url");
     return Err("Missing swf url.".to_string());
   }
-  info!("[RocoKnight][channel] change_channel invoked");
-  crate::launcher::launch_projector_auto(&app, &state)?;
-  info!("[RocoKnight][channel] change_channel done");
+
+  // 阶段 2：重启投影器
+  {
+    let _stage = request_context::StageTimer::new("relaunch_projector");
+    match crate::launcher::launch_projector_auto(&app, &state) {
+      Ok(()) => {
+        tracing::info!("projector relaunched successfully");
+      }
+      Err(e) => {
+        tracing::error!(error = %e, "projector relaunch failed");
+        return Err(e);
+      }
+    }
+  }
+
+  tracing::info!("channel changed successfully");
   Ok(())
 }
 
 #[tauri::command]
 fn reset_to_login(app: AppHandle, state: State<Mutex<AppState>>) -> Result<(), String> {
-  info!("[RocoKnight][reset] command invoked");
-  stop_projector_command(&state);
-  login3_capture::stop_timer_only(&state);
-  with_state(&state, |s| {
-    s.status = AppStatus::Login;
-    s.message = None;
-    s.swf_url = None;
-  });
-  if let Some(main) = app.get_webview("main") {
-    let _ = main.show();
+  let _timer = request_context::CommandTimer::new("reset_to_login", 1000);
+
+  let current_status = with_state(&state, |s| s.status.clone());
+  tracing::info!(current_status = ?current_status, "command invoked");
+
+  // 阶段 1：停止投影器
+  {
+    let _stage = request_context::StageTimer::new("stop_projector");
+    stop_projector_command(&state);
+    login3_capture::stop_timer_only(&state);
+    tracing::info!("projector and capture stopped");
   }
-  let login = app
-    .get_webview("login")
-    .ok_or_else(|| "Login WebView not found.".to_string())?;
-  login
-    .show()
-    .map_err(|_| "Failed to show login webview.".to_string())?;
-  let url = "https://17roco.qq.com/login.html"
-    .parse()
-    .map_err(|_| "Invalid login URL.".to_string())?;
-  login
-    .navigate(url)
-    .map_err(|_| "Failed to navigate login webview.".to_string())?;
-  info!("[RocoKnight][reset] login webview shown and navigated");
-  resize_login_to_window(&app);
-  schedule_login_layout(app.clone());
-  emit_status(&app, &state.lock().expect("state lock"));
-  info!("[RocoKnight][reset] status emitted");
+
+  // 阶段 2：重置状态
+  {
+    let _stage = request_context::StageTimer::new("reset_state");
+    with_state(&state, |s| {
+      tracing::info!(
+        old_status = ?s.status,
+        new_status = ?AppStatus::Login,
+        "state transition"
+      );
+      s.status = AppStatus::Login;
+      s.message = None;
+      s.swf_url = None;
+    });
+    tracing::info!("state reset complete");
+  }
+
+  // 阶段 3：显示登录窗口
+  {
+    let _stage = request_context::StageTimer::new("show_login");
+
+    if let Some(main) = app.get_webview("main") {
+      let _ = main.show();
+    }
+
+    let login = app
+      .get_webview("login")
+      .ok_or_else(|| {
+        tracing::error!("login webview not found");
+        "Login WebView not found.".to_string()
+      })?;
+
+    login
+      .show()
+      .map_err(|e| {
+        tracing::error!(error = ?e, "failed to show login webview");
+        "Failed to show login webview.".to_string()
+      })?;
+
+    tracing::info!("login webview shown");
+  }
+
+  // 阶段 4：导航到登录页
+  {
+    let _stage = request_context::StageTimer::new("navigate");
+
+    let login = app.get_webview("login").unwrap();
+    let url = "https://17roco.qq.com/login.html"
+      .parse()
+      .map_err(|e| {
+        tracing::error!(error = ?e, "invalid login URL");
+        "Invalid login URL.".to_string()
+      })?;
+
+    login
+      .navigate(url)
+      .map_err(|e| {
+        tracing::error!(error = ?e, "failed to navigate login webview");
+        "Failed to navigate login webview.".to_string()
+      })?;
+
+    tracing::info!(url = "https://17roco.qq.com/login.html", "navigation complete");
+  }
+
+  // 阶段 5：调整布局
+  {
+    let _stage = request_context::StageTimer::new("adjust_layout");
+    resize_login_to_window(&app);
+    schedule_login_layout(app.clone());
+    tracing::info!("layout adjusted");
+  }
+
+  // 阶段 6：发送状态
+  {
+    let _stage = request_context::StageTimer::new("emit_status");
+    emit_status(&app, &state.lock().expect("state lock"));
+    tracing::info!("status emitted");
+  }
+
+  tracing::info!("reset to login completed successfully");
   Ok(())
 }
 
 #[tauri::command]
-fn toggle_debug_window(app: AppHandle) -> Result<(), String> {
-  if let Some(window) = app.get_webview_window("debug") {
-    // 窗口已存在，切换显示/隐藏状态
-    if window.is_visible().unwrap_or(false) {
-      window.hide().map_err(|e| format!("Failed to hide debug window: {}", e))?;
-      debug::set_debug_window_state(false);
-    } else {
-      window.show().map_err(|e| format!("Failed to show debug window: {}", e))?;
-      debug::set_debug_window_state(true);
+fn toggle_debug_window(app: AppHandle) -> Result<bool, String> {
+  // 诊断点 1：函数入口
+  startup_log("TOGGLE_ENTERED");
+
+  // 诊断点 2：检查窗口是否存在
+  let window = match app.get_webview_window("debug") {
+    Some(w) => w,
+    None => {
+      startup_log("TOGGLE_ERROR: get_webview_window returned None");
+      return Err("Debug window is not initialized.".to_string());
     }
-    return Ok(());
-  }
+  };
 
-  // 窗口不存在，创建新窗口
-  let window = tauri::WebviewWindowBuilder::new(
-    &app,
-    "debug",
-    tauri::WebviewUrl::App("debug.html".into())
-  )
-  .title("Debug Console")
-  .inner_size(800.0, 600.0)
-  .resizable(true)
-  .maximizable(false)
-  .build()
-  .map_err(|e| format!("Failed to create debug window: {}", e))?;
+  let is_visible = window.is_visible().unwrap_or(false);
+  let new_state = !is_visible;
 
-  // 标记debug窗口已打开
-  debug::set_debug_window_state(true);
-
-  // 监听窗口事件
-  window.on_window_event(move |event| {
-    match event {
-      tauri::WindowEvent::CloseRequested { api, .. } => {
-        // 阻止窗口关闭，改为隐藏
-        api.prevent_close();
-        let _ = event.window().hide();
-        debug::set_debug_window_state(false);
+  // 异步执行窗口操作，避免阻塞
+  let window_clone = window.clone();
+  std::thread::spawn(move || {
+    if new_state {
+      // 诊断点 3：记录 show 结果
+      match window_clone.show() {
+        Ok(_) => {
+          startup_log("TOGGLE_SHOW: Ok");
+          let _ = window_clone.set_focus();
+        }
+        Err(e) => {
+          startup_log(&format!("TOGGLE_SHOW: Err({:?})", e));
+        }
       }
-      _ => {}
+      debug::set_debug_window_state(true);
+      debug_log_bus::set_window_open(true);
+    } else {
+      // 诊断点 3：记录 hide 结果
+      match window_clone.hide() {
+        Ok(_) => {
+          startup_log("TOGGLE_HIDE: Ok");
+        }
+        Err(e) => {
+          startup_log(&format!("TOGGLE_HIDE: Err({:?})", e));
+        }
+      }
+      debug::set_debug_window_state(false);
+      debug_log_bus::set_window_open(false);
     }
   });
 
-  Ok(())
+  Ok(new_state)
 }
 
 #[tauri::command]
@@ -370,6 +522,11 @@ fn debug_log(app: AppHandle, level: String, message: String) {
     "level": level,
     "message": message
   }));
+}
+
+#[tauri::command]
+fn get_debug_stats() -> debug_log_bus::LogBusStats {
+  debug_log_bus::get_stats()
 }
 
 // main window helpers moved to launcher.rs
@@ -398,16 +555,55 @@ fn init_logging(app: &tauri::App) -> Result<std::path::PathBuf, String> {
   let filter = tracing_subscriber::EnvFilter::try_from_default_env()
     .unwrap_or_else(|_| "info".into());
 
-  tracing_subscriber::fmt()
+  // 桥接 log crate 到 tracing
+  tracing_log::LogTracer::init().ok();
+
+  // 创建多层订阅器：文件输出 + Debug Console
+  use tracing_subscriber::layer::SubscriberExt;
+  use tracing_subscriber::util::SubscriberInitExt;
+
+  let file_layer = tracing_subscriber::fmt::layer()
     .with_writer(non_blocking)
-    .with_env_filter(filter)
-    .with_ansi(false)
+    .with_ansi(false);
+
+  let debug_console_layer = debug_console_layer::DebugConsoleLayer::new();
+
+  tracing_subscriber::registry()
+    .with(filter)
+    .with(file_layer)
+    .with(debug_console_layer)
     .try_init()
     .ok();
 
   std::panic::set_hook(Box::new(|info| {
-    error!("panic: {info}");
-    startup_log(&format!("panic: {info}"));
+    let payload = info.payload();
+    let message = if let Some(s) = payload.downcast_ref::<&str>() {
+      s.to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+      s.clone()
+    } else {
+      "Unknown panic payload".to_string()
+    };
+
+    let location = info.location().map(|loc| {
+      format!("{}:{}:{}", loc.file(), loc.line(), loc.column())
+    }).unwrap_or_else(|| "unknown location".to_string());
+
+    let panic_msg = format!("PANIC: {} at {}", message, location);
+
+    // 记录到 tracing（会进入 Debug Console）
+    error!("{}", panic_msg);
+
+    // 记录到 startup log
+    startup_log(&panic_msg);
+
+    // 尝试获取 backtrace（需要 RUST_BACKTRACE=1）
+    if std::env::var("RUST_BACKTRACE").is_ok() {
+      let backtrace = std::backtrace::Backtrace::capture();
+      let backtrace_str = format!("{:?}", backtrace);
+      error!("Backtrace:\n{}", backtrace_str);
+      startup_log(&format!("Backtrace:\n{}", backtrace_str));
+    }
   }));
 
   info!("logging initialized: {}", log_path.display());
@@ -417,6 +613,10 @@ fn init_logging(app: &tauri::App) -> Result<std::path::PathBuf, String> {
 fn main() {
   let _ = set_dpi_awareness();
   init_startup_log();
+
+  // 🔴 验证标记：如果看到这行，说明是新编译的版本
+  startup_log("🔴🔴🔴 VERSION: 2026-02-12-PATCH-V2 🔴🔴🔴");
+
   show_boot_message("A: main entered");
 
   let context = tauri::generate_context!();
@@ -543,12 +743,82 @@ fn main() {
       let current_theme = with_state(&state_for_theme, |s| s.theme_mode);
       apply_theme_to_app(&app_handle_for_theme, current_theme);
 
+      // Pre-create debug window hidden. Toolbar only controls show/hide.
+      let setup_app_handle = app.handle().clone();
+      startup_log("DEBUG_WINDOW_CREATE: Starting");
+      let debug_window = tauri::WebviewWindowBuilder::new(
+        &setup_app_handle,
+        "debug",
+        tauri::WebviewUrl::App("debug.html".into()),
+      )
+      .title("Debug Console")
+      .inner_size(800.0, 600.0)
+      .resizable(true)
+      .maximizable(false)
+      .visible(false)
+      .build()
+      .map_err(|e| {
+        startup_log(&format!("DEBUG_WINDOW_CREATE: Err({:?})", e));
+        format!("Failed to create debug window: {}", e)
+      })?;
+      startup_log("DEBUG_WINDOW_CREATE: Ok");
+      debug::set_debug_window_state(false);
+
+      let debug_window_for_events = debug_window.clone();
+      debug_window.on_window_event(move |event| {
+        match event {
+          tauri::WindowEvent::CloseRequested { api, .. } => {
+            info!("[debug][EVENT] CloseRequested triggered");
+            api.prevent_close();
+
+            // 直接 hide，不要在回调里做复杂操作
+            info!("[debug][EVENT] Calling hide() from CloseRequested...");
+            match debug_window_for_events.hide() {
+              Ok(_) => info!("[debug][EVENT] hide() from CloseRequested = Ok"),
+              Err(e) => error!("[debug][EVENT] hide() from CloseRequested = Err({:?})", e),
+            }
+
+            // 更新状态
+            debug::set_debug_window_state(false);
+            debug_log_bus::set_window_open(false);
+
+            info!("[debug][EVENT] CloseRequested handled");
+          }
+          tauri::WindowEvent::Destroyed => {
+            error!("[debug][EVENT] ⚠️ Destroyed event triggered (窗口被销毁！)");
+            debug::set_debug_window_state(false);
+            debug_log_bus::set_window_open(false);
+          }
+          tauri::WindowEvent::Focused(focused) => {
+            info!("[debug][EVENT] Focused({})", focused);
+          }
+          tauri::WindowEvent::Resized(size) => {
+            info!("[debug][EVENT] Resized({:?})", size);
+          }
+          tauri::WindowEvent::Moved(pos) => {
+            info!("[debug][EVENT] Moved({:?})", pos);
+          }
+          _ => {
+            // 记录其他事件（用于发现未知事件）
+            info!("[debug][EVENT] Other event: {:?}", event);
+          }
+        }
+      });
+
+      // 初始化日志总线
+      debug_log_bus::init(app.handle().clone());
+
       debug::init_debug(app.handle().clone());
       debug_info!("Application initialized successfully");
 
       Ok(())
     })
     .on_window_event(|window, event| {
+      // 只处理主窗口的事件，忽略其他窗口（如debug窗口）
+      if window.label() != "main" {
+        return;
+      }
+
       if let WindowEvent::CloseRequested { .. } = event {
         let state = window.state::<Mutex<AppState>>();
         stop_projector_command(&state);
@@ -579,7 +849,8 @@ fn main() {
       change_channel,
       reset_to_login,
       toggle_debug_window,
-      debug_log
+      debug_log,
+      get_debug_stats
     ])
     .run(context);
 
