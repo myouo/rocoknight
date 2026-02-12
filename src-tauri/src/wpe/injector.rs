@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use tracing::info;
 
-use crate::wpe::{GamePacket, WpeError};
 use crate::wpe::windivert::WinDivertHandle;
+use crate::wpe::{GamePacket, WpeError};
 
 pub struct PacketInjector {
     handle: Arc<WinDivertHandle>,

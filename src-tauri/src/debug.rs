@@ -6,25 +6,28 @@ static DEBUG_APP: OnceLock<AppHandle> = OnceLock::new();
 static DEBUG_WINDOW_OPEN: AtomicBool = AtomicBool::new(false);
 
 pub fn init_debug(app: AppHandle) {
-  let _ = DEBUG_APP.set(app);
+    let _ = DEBUG_APP.set(app);
 }
 
 pub fn set_debug_window_state(open: bool) {
-  DEBUG_WINDOW_OPEN.store(open, Ordering::Relaxed);
+    DEBUG_WINDOW_OPEN.store(open, Ordering::Relaxed);
 }
 
 pub fn debug_log(level: &str, message: &str) {
-  // 只在debug窗口打开时才发送事件
-  if !DEBUG_WINDOW_OPEN.load(Ordering::Relaxed) {
-    return;
-  }
+    // 只在debug窗口打开时才发送事件
+    if !DEBUG_WINDOW_OPEN.load(Ordering::Relaxed) {
+        return;
+    }
 
-  if let Some(app) = DEBUG_APP.get() {
-    let _ = app.emit("debug_log", serde_json::json!({
-      "level": level,
-      "message": message
-    }));
-  }
+    if let Some(app) = DEBUG_APP.get() {
+        let _ = app.emit(
+            "debug_log",
+            serde_json::json!({
+              "level": level,
+              "message": message
+            }),
+        );
+    }
 }
 
 #[macro_export]

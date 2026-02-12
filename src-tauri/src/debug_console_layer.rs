@@ -3,7 +3,7 @@ use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
-use crate::debug_log_bus::{LogEvent, push_log};
+use crate::debug_log_bus::{push_log, LogEvent};
 
 /// Tracing Layer，将日志事件推送到 Debug Console
 pub struct DebugConsoleLayer;
@@ -93,16 +93,18 @@ impl tracing::field::Visit for MessageVisitor {
         if field_name == "message" {
             self.message = value.to_string();
         } else {
-            self.fields.insert(field_name.to_string(), value.to_string());
+            self.fields
+                .insert(field_name.to_string(), value.to_string());
         }
     }
 
     fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        self.fields.insert(field.name().to_string(), value.to_string());
+        self.fields
+            .insert(field.name().to_string(), value.to_string());
     }
 
     fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
-        self.fields.insert(field.name().to_string(), value.to_string());
+        self.fields
+            .insert(field.name().to_string(), value.to_string());
     }
 }
-

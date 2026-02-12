@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tracing::{info, warn};
 
 // NOTE: This is a mock implementation of WinDivert.
@@ -46,7 +46,10 @@ impl WinDivertHandle {
             return Err(crate::wpe::WpeError::NotRunning);
         }
 
-        info!("[WPE] Injecting packet: {} bytes (MOCK - not actually sent)", data.len());
+        info!(
+            "[WPE] Injecting packet: {} bytes (MOCK - not actually sent)",
+            data.len()
+        );
 
         // Placeholder: In real implementation, this would call WinDivert send
         Ok(())

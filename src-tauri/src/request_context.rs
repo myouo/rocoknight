@@ -124,10 +124,7 @@ impl Drop for CommandTimer {
                 "command execution slow"
             );
         } else {
-            tracing::info!(
-                duration_ms = duration_ms,
-                "command completed"
-            );
+            tracing::info!(duration_ms = duration_ms, "command completed");
         }
     }
 }
@@ -176,9 +173,6 @@ impl Drop for StageTimer {
         self.span.record("duration_ms", duration_ms);
         self.span.record("status", "success");
 
-        tracing::info!(
-            duration_ms = duration_ms,
-            "stage completed"
-        );
+        tracing::info!(duration_ms = duration_ms, "stage completed");
     }
 }

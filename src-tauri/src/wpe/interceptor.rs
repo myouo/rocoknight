@@ -1,10 +1,10 @@
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
-use crate::wpe::{GamePacket, PacketHandler, PacketAction, WpeError};
 use crate::wpe::windivert::WinDivertHandle;
+use crate::wpe::{GamePacket, PacketAction, PacketHandler, WpeError};
 
 pub struct PacketInterceptor {
     pid: u32,

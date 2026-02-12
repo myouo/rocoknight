@@ -29,24 +29,32 @@ pub trait PacketHandler: Send + Sync {
 impl GamePacket {
     pub fn parse(data: &[u8]) -> Result<Self, crate::wpe::WpeError> {
         if data.len() < 2 {
-            return Err(crate::wpe::WpeError::PacketParse("Packet too short".to_string()));
+            return Err(crate::wpe::WpeError::PacketParse(
+                "Packet too short".to_string(),
+            ));
         }
 
         let mut cursor = Cursor::new(data);
-        let magic = cursor.read_u16::<LittleEndian>()
-            .map_err(|e| crate::wpe::WpeError::PacketParse(format!("Failed to read magic: {}", e)))?;
+        let magic = cursor.read_u16::<LittleEndian>().map_err(|e| {
+            crate::wpe::WpeError::PacketParse(format!("Failed to read magic: {}", e))
+        })?;
 
         if magic == 0x9527 {
             if data.len() < 16 {
-                return Err(crate::wpe::WpeError::PacketParse("Binary packet too short".to_string()));
+                return Err(crate::wpe::WpeError::PacketParse(
+                    "Binary packet too short".to_string(),
+                ));
             }
 
-            let length = cursor.read_u32::<LittleEndian>()
-                .map_err(|e| crate::wpe::WpeError::PacketParse(format!("Failed to read length: {}", e)))?;
-            let command = cursor.read_u16::<LittleEndian>()
-                .map_err(|e| crate::wpe::WpeError::PacketParse(format!("Failed to read command: {}", e)))?;
-            let qq_num = cursor.read_u64::<LittleEndian>()
-                .map_err(|e| crate::wpe::WpeError::PacketParse(format!("Failed to read qq_num: {}", e)))?;
+            let length = cursor.read_u32::<LittleEndian>().map_err(|e| {
+                crate::wpe::WpeError::PacketParse(format!("Failed to read length: {}", e))
+            })?;
+            let command = cursor.read_u16::<LittleEndian>().map_err(|e| {
+                crate::wpe::WpeError::PacketParse(format!("Failed to read command: {}", e))
+            })?;
+            let qq_num = cursor.read_u64::<LittleEndian>().map_err(|e| {
+                crate::wpe::WpeError::PacketParse(format!("Failed to read qq_num: {}", e))
+            })?;
 
             let remaining = &data[16..];
             Ok(GamePacket::Binary {
@@ -64,23 +72,32 @@ impl GamePacket {
 
     pub fn build(&self) -> Result<Vec<u8>, crate::wpe::WpeError> {
         match self {
-            GamePacket::Binary { magic, length, command, qq_num, data } => {
+            GamePacket::Binary {
+                magic,
+                length,
+                command,
+                qq_num,
+                data,
+            } => {
                 let mut buffer = Vec::new();
-                buffer.write_u16::<LittleEndian>(*magic)
-                    .map_err(|e| crate::wpe::WpeError::PacketBuild(format!("Failed to write magic: {}", e)))?;
-                buffer.write_u32::<LittleEndian>(*length)
-                    .map_err(|e| crate::wpe::WpeError::PacketBuild(format!("Failed to write length: {}", e)))?;
-                buffer.write_u16::<LittleEndian>(*command)
-                    .map_err(|e| crate::wpe::WpeError::PacketBuild(format!("Failed to write command: {}", e)))?;
-                buffer.write_u64::<LittleEndian>(*qq_num)
-                    .map_err(|e| crate::wpe::WpeError::PacketBuild(format!("Failed to write qq_num: {}", e)))?;
-                buffer.write_all(data)
-                    .map_err(|e| crate::wpe::WpeError::PacketBuild(format!("Failed to write data: {}", e)))?;
+                buffer.write_u16::<LittleEndian>(*magic).map_err(|e| {
+                    crate::wpe::WpeError::PacketBuild(format!("Failed to write magic: {}", e))
+                })?;
+                buffer.write_u32::<LittleEndian>(*length).map_err(|e| {
+                    crate::wpe::WpeError::PacketBuild(format!("Failed to write length: {}", e))
+                })?;
+                buffer.write_u16::<LittleEndian>(*command).map_err(|e| {
+                    crate::wpe::WpeError::PacketBuild(format!("Failed to write command: {}", e))
+                })?;
+                buffer.write_u64::<LittleEndian>(*qq_num).map_err(|e| {
+                    crate::wpe::WpeError::PacketBuild(format!("Failed to write qq_num: {}", e))
+                })?;
+                buffer.write_all(data).map_err(|e| {
+                    crate::wpe::WpeError::PacketBuild(format!("Failed to write data: {}", e))
+                })?;
                 Ok(buffer)
             }
-            GamePacket::Text(text) => {
-                Ok(text.as_bytes().to_vec())
-            }
+            GamePacket::Text(text) => Ok(text.as_bytes().to_vec()),
         }
     }
 

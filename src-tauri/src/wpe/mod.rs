@@ -1,11 +1,11 @@
+pub mod injector;
+pub mod interceptor;
 pub mod packet;
 pub mod windivert;
-pub mod interceptor;
-pub mod injector;
 
-pub use packet::{GamePacket, PacketHandler, PacketAction};
-pub use interceptor::PacketInterceptor;
 pub use injector::PacketInjector;
+pub use interceptor::PacketInterceptor;
+pub use packet::{GamePacket, PacketAction, PacketHandler};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WpeError {

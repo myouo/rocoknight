@@ -1,8 +1,9 @@
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tracing::Level;
 
 // ============================================================================
@@ -158,6 +159,7 @@ impl LogBusState {
 static LOG_BUS: OnceLock<Arc<Mutex<LogBusState>>> = OnceLock::new();
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 static FLUSH_THREAD_RUNNING: AtomicBool = AtomicBool::new(false);
+static SHOULD_EXIT: AtomicBool = AtomicBool::new(false); // 新增：退出标志
 
 // ============================================================================
 // 公共 API
@@ -178,6 +180,11 @@ pub fn init(app_handle: AppHandle) {
 
 /// 推送日志事件到总线
 pub fn push_log(event: LogEvent) {
+    // 如果正在退出，立即返回，不做任何操作
+    if crate::EXITING.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+
     let Some(bus) = LOG_BUS.get() else {
         return;
     };
@@ -230,6 +237,28 @@ pub fn push_log(event: LogEvent) {
 
 /// 设置 Debug 窗口状态
 pub fn set_window_open(open: bool) {
+    // 如果正在退出，立即返回，不做任何操作
+    if crate::EXITING.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+
+    // 诊断日志：记录窗口状态变化
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            let path = std::path::PathBuf::from(local)
+                .join("RocoKnight")
+                .join("logs")
+                .join("rocoknight.log");
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                let _ = writeln!(file, "[{:?}] LOG_BUS: set_window_open({})", std::time::SystemTime::now(), open);
+            }
+        }
+    }
+
     let Some(bus) = LOG_BUS.get() else {
         return;
     };
@@ -244,28 +273,38 @@ pub fn set_window_open(open: bool) {
     let was_open = state.window_open;
     state.window_open = open;
 
-    // 窗口从关闭到打开：发送历史日志
+    // 窗口从关闭到打开：不发送历史日志（防止退出时阻塞）
+    // 注释掉历史日志发送，避免在退出时触发 emit_batch
     if !was_open && open {
-        let history: Vec<LogEvent> = state.ring_buffer.iter().cloned().collect();
-        drop(state); // 释放锁
-
-        if !history.is_empty() {
-            emit_batch(history);
+        // 诊断日志
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                let path = std::path::PathBuf::from(local)
+                    .join("RocoKnight")
+                    .join("logs")
+                    .join("rocoknight.log");
+                if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                    let _ = writeln!(file, "[{:?}] LOG_BUS: skipping history logs (size: {})", std::time::SystemTime::now(), state.ring_buffer.len());
+                }
+            }
         }
+
+        // 不发送历史日志，避免在退出时触发 emit_batch
+        // let history: Vec<LogEvent> = state.ring_buffer.iter().cloned().collect();
+        // drop(state);
+        // if !history.is_empty() {
+        //     emit_batch(history);
+        // }
     }
 
     tracing::info!("[LogBus] Window state changed: open={}", open);
 }
-
 /// 获取当前窗口状态
 pub fn is_window_open() -> bool {
     LOG_BUS
         .get()
-        .and_then(|bus| {
-            bus.lock()
-                .ok()
-                .map(|state| state.window_open)
-        })
+        .and_then(|bus| bus.lock().ok().map(|state| state.window_open))
         .unwrap_or(false)
 }
 
@@ -274,12 +313,10 @@ pub fn get_stats() -> LogBusStats {
     LOG_BUS
         .get()
         .and_then(|bus| {
-            bus.lock()
-                .ok()
-                .map(|mut state| {
-                    state.update_stats();
-                    state.stats.clone()
-                })
+            bus.lock().ok().map(|mut state| {
+                state.update_stats();
+                state.stats.clone()
+            })
         })
         .unwrap_or_default()
 }
@@ -289,22 +326,35 @@ pub fn get_recent_logs(limit: usize) -> Vec<LogEvent> {
     LOG_BUS
         .get()
         .and_then(|bus| {
-            bus.lock()
-                .ok()
-                .map(|state| {
-                    let count = state.ring_buffer.len().min(limit);
-                    state.ring_buffer
-                        .iter()
-                        .rev()  // 最新的在前
-                        .take(count)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()  // 恢复时间顺序
-                        .collect()
-                })
+            bus.lock().ok().map(|state| {
+                let count = state.ring_buffer.len().min(limit);
+                state
+                    .ring_buffer
+                    .iter()
+                    .rev() // 最新的在前
+                    .take(count)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev() // 恢复时间顺序
+                    .collect()
+            })
         })
         .unwrap_or_default()
+}
+
+/// 停止日志总线（在程序退出时调用）
+pub fn shutdown() {
+    tracing::info!("[LogBus] Shutting down...");
+    // 设置退出标志，让 flush_loop 自然退出
+    SHOULD_EXIT.store(true, Ordering::Relaxed);
+    // 不等待线程退出，因为我们准备强制退出进程
+    tracing::info!("[LogBus] Exit flag set, flush loop will exit on next check");
+}
+
+/// 获取退出标志（用于 watchdog 诊断）
+pub fn is_should_exit() -> bool {
+    SHOULD_EXIT.load(Ordering::Relaxed)
 }
 
 // ============================================================================
@@ -316,7 +366,21 @@ fn flush_loop() {
     tracing::info!("[LogBus] Flush thread started");
 
     loop {
+        // 检查是否应该退出（每次循环都检查）
+        if SHOULD_EXIT.load(Ordering::Relaxed) || crate::EXITING.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::info!("[LogBus] Flush thread exiting");
+            FLUSH_THREAD_RUNNING.store(false, Ordering::SeqCst);
+            break;
+        }
+
         std::thread::sleep(std::time::Duration::from_millis(BATCH_INTERVAL_MS));
+
+        // sleep 后立即检查退出标志
+        if SHOULD_EXIT.load(Ordering::Relaxed) || crate::EXITING.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::info!("[LogBus] Flush thread exiting after sleep");
+            FLUSH_THREAD_RUNNING.store(false, Ordering::SeqCst);
+            break;
+        }
 
         let Some(bus) = LOG_BUS.get() else {
             continue;
@@ -354,25 +418,174 @@ fn flush_loop() {
     }
 }
 
-/// 向前端发送批量日志
+/// 向前端发送批量日志（带超时保护）
 fn emit_batch(batch: Vec<LogEvent>) {
+    // BUS_EMIT_ENTER
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            let path = std::path::PathBuf::from(local)
+                .join("RocoKnight")
+                .join("logs")
+                .join("rocoknight.log");
+            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                let _ = writeln!(file, "[{:?}] BUS_EMIT_ENTER: batch size={}", std::time::SystemTime::now(), batch.len());
+            }
+        }
+    }
+
     let Some(app) = APP_HANDLE.get() else {
         return;
     };
 
-    if let Err(e) = app.emit("debug_log_batch", &batch) {
-        eprintln!("[LogBus] Failed to emit batch: {}", e);
+    // 检查是否正在退出（必须第一个检查，防止任何 emit 操作）
+    if SHOULD_EXIT.load(Ordering::Relaxed) {
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                let path = std::path::PathBuf::from(local)
+                    .join("RocoKnight")
+                    .join("logs")
+                    .join("rocoknight.log");
+                if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                    let _ = writeln!(file, "[{:?}] BUS_EMIT_SKIP: SHOULD_EXIT=true", std::time::SystemTime::now());
+                }
+            }
+        }
+        return;
+    }
+
+    // 检查窗口是否打开（只在窗口打开时发送）
+    if !is_window_open() {
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                let path = std::path::PathBuf::from(local)
+                    .join("RocoKnight")
+                    .join("logs")
+                    .join("rocoknight.log");
+                if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                    let _ = writeln!(file, "[{:?}] BUS_EMIT_SKIP: window_open=false", std::time::SystemTime::now());
+                }
+            }
+        }
+        return;
+    }
+
+    // 检查窗口是否存在
+    match app.get_webview_window("debug") {
+        Some(_) => {
+            // 窗口存在，继续
+        }
+        None => {
+            #[cfg(target_os = "windows")]
+            {
+                if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                    let path = std::path::PathBuf::from(local)
+                        .join("RocoKnight")
+                        .join("logs")
+                        .join("rocoknight.log");
+                    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                        let _ = writeln!(file, "[{:?}] BUS_EMIT_ERR: debug window not found", std::time::SystemTime::now());
+                    }
+                }
+            }
+            return;
+        }
+    }
+
+    // 使用线程 + 超时机制，避免 emit 阻塞
+    let (tx, rx) = std::sync::mpsc::channel();
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        let result = app_clone.emit("debug_log_batch", &batch);
+        let _ = tx.send(result);
+    });
+
+    // 等待最多 100ms
+    match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+        Ok(Ok(())) => {
+            // 发送成功
+            #[cfg(target_os = "windows")]
+            {
+                if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                    let path = std::path::PathBuf::from(local)
+                        .join("RocoKnight")
+                        .join("logs")
+                        .join("rocoknight.log");
+                    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                        let _ = writeln!(file, "[{:?}] BUS_EMIT_OK", std::time::SystemTime::now());
+                    }
+                }
+            }
+        }
+        Ok(Err(e)) => {
+            eprintln!("[LogBus] Failed to emit batch: {}", e);
+            #[cfg(target_os = "windows")]
+            {
+                if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                    let path = std::path::PathBuf::from(local)
+                        .join("RocoKnight")
+                        .join("logs")
+                        .join("rocoknight.log");
+                    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                        let _ = writeln!(file, "[{:?}] BUS_EMIT_ERR: {:?}", std::time::SystemTime::now(), e);
+                    }
+                }
+            }
+        }
+        Err(_) => {
+            eprintln!("[LogBus] Emit batch timeout");
+            #[cfg(target_os = "windows")]
+            {
+                if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                    let path = std::path::PathBuf::from(local)
+                        .join("RocoKnight")
+                        .join("logs")
+                        .join("rocoknight.log");
+                    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                        let _ = writeln!(file, "[{:?}] BUS_EMIT_TIMEOUT", std::time::SystemTime::now());
+                    }
+                }
+            }
+        }
     }
 }
-
-/// 向前端发送统计信息
+/// 向前端发送统计信息（带超时保护）
 fn emit_stats(stats: LogBusStats) {
     let Some(app) = APP_HANDLE.get() else {
         return;
     };
 
-    if let Err(e) = app.emit("debug_log_stats", &stats) {
-        eprintln!("[LogBus] Failed to emit stats: {}", e);
+    // 检查是否正在退出（必须第一个检查，防止任何 emit 操作）
+    if SHOULD_EXIT.load(Ordering::Relaxed) {
+        return;
+    }
+
+    // 检查窗口是否打开（只在窗口打开时发送）
+    if !is_window_open() {
+        return;
+    }
+
+    // 使用线程 + 超时机制，避免 emit 阻塞
+    let (tx, rx) = std::sync::mpsc::channel();
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        let result = app_clone.emit("debug_log_stats", &stats);
+        let _ = tx.send(result);
+    });
+
+    // 等待最多 50ms
+    match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+        Ok(Ok(())) => {
+            // 发送成功
+        }
+        Ok(Err(e)) => {
+            eprintln!("[LogBus] Failed to emit stats: {}", e);
+        }
+        Err(_) => {
+            eprintln!("[LogBus] Emit stats timeout");
+        }
     }
 }
 
