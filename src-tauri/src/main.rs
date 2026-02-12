@@ -11,7 +11,7 @@ mod debug;
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
 
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri::webview::WebviewBuilder;
 use tauri_utils::config::WebviewUrl;
 use tauri::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize, Size, State};
@@ -324,7 +324,7 @@ fn open_debug_window(app: AppHandle) -> Result<(), String> {
     return Ok(());
   }
 
-  tauri::WebviewWindowBuilder::new(
+  let window = tauri::WebviewWindowBuilder::new(
     &app,
     "debug",
     tauri::WebviewUrl::App("debug.html".into())
@@ -334,6 +334,17 @@ fn open_debug_window(app: AppHandle) -> Result<(), String> {
   .resizable(true)
   .build()
   .map_err(|e| format!("Failed to create debug window: {}", e))?;
+
+  // 标记debug窗口已打开
+  debug::set_debug_window_state(true);
+
+  // 监听窗口关闭事件
+  let app_clone = app.clone();
+  window.on_window_event(move |event| {
+    if let tauri::WindowEvent::Destroyed = event {
+      debug::set_debug_window_state(false);
+    }
+  });
 
   Ok(())
 }
