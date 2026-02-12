@@ -319,11 +319,20 @@ fn reset_to_login(app: AppHandle, state: State<Mutex<AppState>>) -> Result<(), S
 }
 
 #[tauri::command]
-fn open_debug_window(app: AppHandle) -> Result<(), String> {
-  if app.get_webview_window("debug").is_some() {
+fn toggle_debug_window(app: AppHandle) -> Result<(), String> {
+  if let Some(window) = app.get_webview_window("debug") {
+    // 窗口已存在，切换显示/隐藏状态
+    if window.is_visible().unwrap_or(false) {
+      window.hide().map_err(|e| format!("Failed to hide debug window: {}", e))?;
+      debug::set_debug_window_state(false);
+    } else {
+      window.show().map_err(|e| format!("Failed to show debug window: {}", e))?;
+      debug::set_debug_window_state(true);
+    }
     return Ok(());
   }
 
+  // 窗口不存在，创建新窗口
   let window = tauri::WebviewWindowBuilder::new(
     &app,
     "debug",
@@ -332,17 +341,23 @@ fn open_debug_window(app: AppHandle) -> Result<(), String> {
   .title("Debug Console")
   .inner_size(800.0, 600.0)
   .resizable(true)
+  .maximizable(false)
   .build()
   .map_err(|e| format!("Failed to create debug window: {}", e))?;
 
   // 标记debug窗口已打开
   debug::set_debug_window_state(true);
 
-  // 监听窗口关闭事件
-  let app_clone = app.clone();
+  // 监听窗口事件
   window.on_window_event(move |event| {
-    if let tauri::WindowEvent::Destroyed = event {
-      debug::set_debug_window_state(false);
+    match event {
+      tauri::WindowEvent::CloseRequested { api, .. } => {
+        // 阻止窗口关闭，改为隐藏
+        api.prevent_close();
+        let _ = event.window().hide();
+        debug::set_debug_window_state(false);
+      }
+      _ => {}
     }
   });
 
@@ -563,7 +578,7 @@ fn main() {
       restart_projector,
       change_channel,
       reset_to_login,
-      open_debug_window,
+      toggle_debug_window,
       debug_log
     ])
     .run(context);
