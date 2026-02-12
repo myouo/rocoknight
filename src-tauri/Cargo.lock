@@ -2794,6 +2794,7 @@ dependencies = [
 name = "rocoknight"
 version = "0.1.0"
 dependencies = [
+ "byteorder",
  "log",
  "serde",
  "serde_json",
@@ -2801,6 +2802,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-log",
  "tauri-utils",
+ "thiserror 1.0.69",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",

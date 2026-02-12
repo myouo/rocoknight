@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 use std::time::Duration;
+use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, State};
 use tauri::PhysicalSize;
@@ -16,10 +17,20 @@ use crate::embed_win32::{
 };
 use crate::projector::{resolve_projector_path, stop_projector as kill_projector};
 use crate::state::{emit_status, AppState, AppStatus, ProjectorHandle};
+use crate::wpe::{PacketInjector, PacketInterceptor};
 use tracing::info;
 
 const LOGIN_ZOOM: f64 = 1.17;
 const UI_BAR_HEIGHT: i32 = 36;
+
+fn extract_qq_from_url(url: &str) -> Option<u64> {
+  url::Url::parse(url).ok()
+    .and_then(|parsed| {
+      parsed.query_pairs()
+        .find(|(key, _)| key == "qq" || key == "uin")
+        .and_then(|(_, value)| value.parse::<u64>().ok())
+    })
+}
 
 fn main_window(app: &AppHandle) -> Result<tauri::Window, String> {
   app
@@ -70,9 +81,16 @@ pub fn stop_projector(state: &State<Mutex<AppState>>) {
       detach_child(HWND(projector.hwnd as *mut std::ffi::c_void), projector.original_style);
       kill_projector(&mut projector.process);
     }
+
+    if let Some(interceptor) = s.wpe_interceptor.take() {
+      info!("[WPE] Stopping interceptor");
+      interceptor.stop();
+    }
+
     s.status = AppStatus::Login;
     s.message = None;
     s.last_projector_rect = None;
+    s.qq_num = None;
   });
 }
 
@@ -145,6 +163,25 @@ pub fn launch_projector_auto(app: &AppHandle, state: &State<Mutex<AppState>>) ->
   info!("[RocoKnight][launcher] projector attached and brought to top");
   schedule_projector_fit(app.clone());
 
+  let qq_num = extract_qq_from_url(&swf_url).unwrap_or(0);
+  info!("[RocoKnight][launcher] extracted QQ number: {}", qq_num);
+
+  let injector = match PacketInjector::new(pid) {
+    Ok(inj) => Arc::new(inj),
+    Err(e) => {
+      info!("[WPE] Failed to create injector: {}", e);
+      return Err(format!("Failed to create packet injector: {}", e));
+    }
+  };
+
+  let interceptor = match PacketInterceptor::new(pid) {
+    Ok(int) => int,
+    Err(e) => {
+      info!("[WPE] Failed to create interceptor: {}", e);
+      return Err(format!("Failed to create packet interceptor: {}", e));
+    }
+  };
+
   with_state(state, |s| {
     s.projector = Some(ProjectorHandle {
       process,
@@ -154,6 +191,8 @@ pub fn launch_projector_auto(app: &AppHandle, state: &State<Mutex<AppState>>) ->
     s.status = AppStatus::Running;
     s.message = None;
     s.last_projector_rect = None;
+    s.qq_num = Some(qq_num);
+    s.wpe_interceptor = Some(interceptor);
   });
   emit_status(app, &state.lock().expect("state lock"));
 

@@ -65,6 +65,8 @@ pub struct AppState {
   pub capture_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
   pub projector: Option<ProjectorHandle>,
   pub last_projector_rect: Option<(i32, i32, i32, i32)>,
+  pub qq_num: Option<u64>,
+  pub wpe_interceptor: Option<Arc<crate::wpe::PacketInterceptor>>,
 }
 
 impl AppState {
@@ -77,6 +79,8 @@ impl AppState {
       capture_stop: None,
       projector: None,
       last_projector_rect: None,
+      qq_num: None,
+      wpe_interceptor: None,
     }
   }
 }

@@ -5,6 +5,8 @@ mod launcher;
 mod login3_capture;
 mod projector;
 mod state;
+mod wpe;
+mod debug;
 
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
@@ -316,6 +318,34 @@ fn reset_to_login(app: AppHandle, state: State<Mutex<AppState>>) -> Result<(), S
   Ok(())
 }
 
+#[tauri::command]
+fn open_debug_window(app: AppHandle) -> Result<(), String> {
+  if app.get_webview_window("debug").is_some() {
+    return Ok(());
+  }
+
+  tauri::WebviewWindowBuilder::new(
+    &app,
+    "debug",
+    tauri::WebviewUrl::App("debug.html".into())
+  )
+  .title("Debug Console")
+  .inner_size(800.0, 600.0)
+  .resizable(true)
+  .build()
+  .map_err(|e| format!("Failed to create debug window: {}", e))?;
+
+  Ok(())
+}
+
+#[tauri::command]
+fn debug_log(app: AppHandle, level: String, message: String) {
+  let _ = app.emit("debug_log", serde_json::json!({
+    "level": level,
+    "message": message
+  }));
+}
+
 // main window helpers moved to launcher.rs
 
 fn init_logging(app: &tauri::App) -> Result<std::path::PathBuf, String> {
@@ -487,6 +517,9 @@ fn main() {
       let current_theme = with_state(&state_for_theme, |s| s.theme_mode);
       apply_theme_to_app(&app_handle_for_theme, current_theme);
 
+      debug::init_debug(app.handle().clone());
+      debug_info!("Application initialized successfully");
+
       Ok(())
     })
     .on_window_event(|window, event| {
@@ -518,7 +551,9 @@ fn main() {
       stop_projector,
       restart_projector,
       change_channel,
-      reset_to_login
+      reset_to_login,
+      open_debug_window,
+      debug_log
     ])
     .run(context);
 

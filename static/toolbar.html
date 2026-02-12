@@ -71,6 +71,7 @@
         <button class="toolbar-btn" id="btn-change-channel" type="button">更换频道</button>
       </div>
       <div class="group">
+        <button class="toolbar-btn" id="btn-debug" type="button">调试窗口</button>
         <button class="toolbar-btn" id="btn-toggle-theme" type="button">切换主题</button>
       </div>
     </div>
@@ -116,8 +117,13 @@
         await invoke("change_channel");
       }
 
+      async function openDebug() {
+        await invoke("open_debug_window");
+      }
+
       document.getElementById("btn-relogin")?.addEventListener("click", relogin);
       document.getElementById("btn-change-channel")?.addEventListener("click", changeChannel);
+      document.getElementById("btn-debug")?.addEventListener("click", openDebug);
       document.getElementById("btn-toggle-theme")?.addEventListener("click", toggleTheme);
       document.addEventListener("contextmenu", (event) => event.preventDefault());
       initTheme();
