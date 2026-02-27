@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WPE 封包拦截</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            font-family: "Consolas", "Monaco", monospace;
+            font-size: 13px;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            height: 100%;
+        }
+
+        .header {
+            padding: 8px 12px;
+            background: #2d2d30;
+            border-bottom: 1px solid #3e3e42;
+        }
+
+        .header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .header-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .title {
+            font-weight: 600;
+            color: #cccccc;
+        }
+
+        .controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 4px 12px;
+            background: #0e639c;
+            color: #ffffff;
+            border: none;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .btn:hover {
+            background: #1177bb;
+        }
+
+        .btn:active {
+            background: #0d5a8f;
+        }
+
+        .btn.paused {
+            background: #d4a017;
+        }
+
+        .filter-group {
+            display: flex;
+            gap: 4px;
+        }
+
+        .filter-btn {
+            padding: 2px 8px;
+            background: #3e3e42;
+            color: #d4d4d4;
+            border: 1px solid #555;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+
+        .filter-btn.active {
+            background: #0e639c;
+            border-color: #0e639c;
+        }
+
+        .search-box {
+            padding: 4px 8px;
+            background: #3e3e42;
+            border: 1px solid #555;
+            border-radius: 2px;
+            color: #d4d4d4;
+            font-size: 12px;
+            width: 200px;
+        }
+
+        .content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            position: sticky;
+            top: 0;
+            background: #2d2d30;
+            text-align: left;
+            padding: 4px 8px;
+            font-weight: 600;
+            border-bottom: 1px solid #3e3e42;
+            z-index: 10;
+            color: #cccccc;
+        }
+
+        td {
+            padding: 4px 8px;
+            border-bottom: 1px solid #2d2d30;
+        }
+
+        tr:hover td {
+            background: #2a2d2e;
+        }
+
+        .log-entry.hidden {
+            display: none;
+        }
+
+        .log-time {
+            color: #858585;
+            white-space: nowrap;
+            width: 100px;
+        }
+
+        .log-level {
+            display: inline-block;
+            font-weight: 600;
+            white-space: nowrap;
+            width: 80px;
+        }
+
+        .log-level.send {
+            color: #569cd6;
+        }
+
+        .log-level.recv {
+            color: #4ec9b0;
+        }
+
+        .log-level.sendto {
+            color: #9cdcfe;
+        }
+
+        .log-level.recvfrom {
+            color: #dcdcaa;
+        }
+
+        .log-level.wsasend {
+            color: #c586c0;
+        }
+
+        .log-level.wsarecv {
+            color: #d16969;
+        }
+
+        .log-len {
+            color: #858585;
+            width: 60px;
+        }
+
+        .log-message {
+            color: #d4d4d4;
+            word-break: break-all;
+            font-family: inherit;
+        }
+
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1e1e1e;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #424242;
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4e4e4e;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-row">
+                <div class="title">WPE 封包拦截</div>
+                <div class="controls">
+                    <button class="btn" id="btn-pause">暂停</button>
+                    <button class="btn" id="btn-clear">清空</button>
+                    <button class="btn" id="btn-export">导出</button>
+                </div>
+            </div>
+            <div class="header-row">
+                <div class="controls">
+                    <span style="font-size: 11px; color: #858585;">过滤:</span>
+                    <div class="filter-group">
+                        <button class="filter-btn active" data-level="send">Send</button>
+                        <button class="filter-btn active" data-level="recv">Recv</button>
+                        <button class="filter-btn active" data-level="sendto">SendTo</button>
+                        <button class="filter-btn active" data-level="recvfrom">RecvFrom</button>
+                        <button class="filter-btn active" data-level="wsasend">WSASend</button>
+                        <button class="filter-btn active" data-level="wsarecv">WSARecv</button>
+                    </div>
+                    <input type="text" class="search-box" id="search-box" placeholder="搜索 (Hex, 例: AABB)..." />
+                </div>
+            </div>
+        </div>
+        <div class="content" id="log-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 100px;">时间</th>
+                        <th style="width: 80px;">方向</th>
+                        <th style="width: 60px;">长度</th>
+                        <th>十六进制数据</th>
+                    </tr>
+                </thead>
+                <tbody id="log-table-body">
+                    <!-- Items injected by JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <script>
+        const logTableBody = document.getElementById("log-table-body");
+        const logContent = document.getElementById("log-content");
+        const btnClear = document.getElementById("btn-clear");
+        const btnPause = document.getElementById("btn-pause");
+        const btnExport = document.getElementById("btn-export");
+        const searchBox = document.getElementById("search-box");
+
+        let autoScroll = true;
+        let paused = false;
+        const MAX_LOG_ENTRIES = 3000;
+        let logEntries = [];
+        let renderScheduled = false;
+
+        // Filter settings
+        const dirFilters = {
+            send: true,
+            recv: true,
+            sendto: true,
+            recvfrom: true,
+            wsasend: true,
+            wsarecv: true
+        };
+        let searchQuery = "";
+
+        async function invoke(name, payload) {
+            const t = window.__TAURI__ || window.__TAURI_INTERNALS__;
+            const invoker = t && (t.invoke || (t.core && t.core.invoke));
+            if (!invoker) {
+                console.warn("TAURI invoke unavailable", name);
+                return null;
+            }
+            try {
+                return await invoker(name, payload || {});
+            } catch (err) {
+                console.warn("TAURI invoke failed", name, err);
+                return null;
+            }
+        }
+
+        async function listen(event, handler) {
+            const t = window.__TAURI__ || window.__TAURI_INTERNALS__;
+            const listener = t && (t.event && t.event.listen);
+            if (!listener) {
+                console.warn("TAURI listen unavailable", event);
+                return () => { };
+            }
+            try {
+                return await listener(event, handler);
+            } catch (err) {
+                console.warn("TAURI listen failed", event, err);
+                return () => { };
+            }
+        }
+
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            const h = String(date.getHours()).padStart(2, "0");
+            const m = String(date.getMinutes()).padStart(2, "0");
+            const s = String(date.getSeconds()).padStart(2, "0");
+            const ms = String(date.getMilliseconds()).padStart(3, "0");
+            return `${h}:${m}:${s}.${ms}`;
+        }
+
+        function shouldShowEntry(entry) {
+            const dir = entry.direction.toLowerCase();
+            if (!dirFilters[dir]) {
+                return false;
+            }
+
+            if (searchQuery && !entry.data_hex.toLowerCase().includes(searchQuery.toLowerCase())) {
+                return false;
+            }
+            return true;
+        }
+
+        function addLogEntries(entries) {
+            if (paused) {
+                return;
+            }
+
+            logEntries.push(...entries);
+
+            if (logEntries.length > MAX_LOG_ENTRIES) {
+                logEntries = logEntries.slice(-MAX_LOG_ENTRIES);
+            }
+
+            if (!renderScheduled) {
+                renderScheduled = true;
+                requestAnimationFrame(() => {
+                    renderLogs();
+                    renderScheduled = false;
+                });
+            }
+        }
+
+        function renderLogs() {
+            const fragment = document.createDocumentFragment();
+            const visibleEntries = logEntries.slice(-1000);
+
+            for (const entry of visibleEntries) {
+                if (!shouldShowEntry(entry)) {
+                    continue;
+                }
+
+                const tr = document.createElement("tr");
+
+                const tdTime = document.createElement("td");
+                tdTime.className = "log-time";
+                tdTime.textContent = formatTime(entry.timestamp);
+
+                const tdDir = document.createElement("td");
+                const dirSpan = document.createElement("span");
+                dirSpan.className = `log-level ${entry.direction.toLowerCase()}`;
+                dirSpan.textContent = entry.direction;
+                tdDir.appendChild(dirSpan);
+
+                const tdLen = document.createElement("td");
+                tdLen.className = "log-len";
+                tdLen.textContent = entry.len;
+
+                const tdData = document.createElement("td");
+                tdData.className = "log-message";
+                tdData.textContent = entry.data_hex;
+
+                tr.appendChild(tdTime);
+                tr.appendChild(tdDir);
+                tr.appendChild(tdLen);
+                tr.appendChild(tdData);
+
+                fragment.appendChild(tr);
+            }
+
+            logTableBody.innerHTML = '';
+            logTableBody.appendChild(fragment);
+
+            if (autoScroll) {
+                logContent.scrollTop = logContent.scrollHeight;
+            }
+        }
+
+        function exportLogs() {
+            const data = JSON.stringify(logEntries, null, 2);
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `wpe-logs-${Date.now()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        btnClear.addEventListener("click", () => {
+            logEntries = [];
+            logTableBody.innerHTML = "";
+        });
+
+        btnPause.addEventListener("click", () => {
+            paused = !paused;
+            btnPause.textContent = paused ? "继续" : "暂停";
+            btnPause.classList.toggle("paused", paused);
+        });
+
+        btnExport.addEventListener("click", exportLogs);
+
+        searchBox.addEventListener("input", (e) => {
+            searchQuery = e.target.value;
+            renderLogs();
+        });
+
+        document.querySelectorAll(".filter-btn").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const dir = btn.dataset.level;
+                dirFilters[dir] = !dirFilters[dir];
+                btn.classList.toggle("active", dirFilters[dir]);
+                renderLogs();
+            });
+        });
+
+        logContent.addEventListener("scroll", () => {
+            const isAtBottom =
+                logContent.scrollHeight - logContent.scrollTop <=
+                logContent.clientHeight + 50;
+            autoScroll = isAtBottom;
+        });
+
+        listen("wpe_packet", (event) => {
+            try {
+                const packet = JSON.parse(event.payload);
+                addLogEntries([packet]);
+            } catch (e) {
+                console.error("Failed to parse WPE packet JSON", event.payload);
+            }
+        });
+    </script>
+</body>
+
+</html>

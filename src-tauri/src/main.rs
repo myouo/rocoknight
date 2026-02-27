@@ -866,6 +866,23 @@ fn main() {
             dbglog!(INFO, "Debug window created successfully");
             debug::set_debug_window_state(false);
 
+            let wpe_window = tauri::WebviewWindowBuilder::new(
+                &setup_app_handle,
+                "wpe",
+                tauri::WebviewUrl::App("wpe.html".into()),
+            )
+            .title("WPE 封包拦截")
+            .inner_size(800.0, 600.0)
+            .resizable(true)
+            .maximizable(false)
+            .visible(false)
+            .build()
+            .map_err(|e| {
+                startup_log(&format!("WPE_WINDOW_CREATE: Err({:?})", e));
+                format!("Failed to create WPE window: {}", e)
+            })?;
+            wpe::set_wpe_window_state(false);
+
             // 全局退出标志（用于在退出时拒绝所有 debug 操作）
             static EXITING_GLOBAL: std::sync::atomic::AtomicBool =
                 std::sync::atomic::AtomicBool::new(false);
@@ -931,6 +948,24 @@ fn main() {
                 }
             });
 
+            let wpe_window_for_events = wpe_window.clone();
+            wpe_window.on_window_event(move |event| {
+                if EXITING.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        let _ = wpe_window_for_events.hide();
+                        wpe::set_wpe_window_state(false);
+                    }
+                    tauri::WindowEvent::Destroyed => {
+                        wpe::set_wpe_window_state(false);
+                    }
+                    _ => {}
+                }
+            });
+
             // 初始化日志总线
             debug_log_bus::init(app.handle().clone());
 
@@ -980,7 +1015,8 @@ fn main() {
             toggle_debug_window,
             debug_log,
             get_debug_stats,
-            debug_get_recent_logs
+            debug_get_recent_logs,
+            wpe::toggle_wpe_window
         ])
         .run(context);
 

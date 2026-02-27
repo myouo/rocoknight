@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod:*)",
+      "Bash(python3:*)",
+      "Bash(bash scripts/roco.sh:*)",
+      "Bash(git -C /home/myo/rocoknight show f9ed823)",
+      "Bash(git -C /home/myo/rocoknight log --all --oneline --grep=\"packet\\\\|wpe\\\\|intercept\\\\|socket\" -i)",
+      "Bash(git -C /home/myo/rocoknight diff HEAD~5..HEAD -- src-tauri/src/)",
+      "Bash(git -C /home/myo/rocoknight branch -a)",
+      "Bash(git -C /home/myo/rocoknight status)",
+      "Bash(find:*)",
+      "Bash(git -C /home/myo/rocoknight diff docs/wpe.md)",
+      "Bash(git -C /home/myo/rocoknight show main:docs/wpe.md)",
+      "Bash(timeout 120 cargo check:*)",
+      "Bash(ls:*)",
+      "Bash(cargo check:*)",
+      "Bash(rustc:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo update:*)",
+      "Bash(cargo clean:*)",
+      "Bash(claude-code skill install:*)",
+      "Bash(claude skill install:*)",
+      "Bash(rustfmt:*)"
+    ]
+  }
+}

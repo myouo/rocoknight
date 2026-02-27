@@ -257,7 +257,7 @@ pub fn launch_projector_auto(
             }
         };
 
-        match PacketInterceptor::new(pid) {
+        match PacketInterceptor::new(pid, app.clone()) {
             Ok(int) => {
                 tracing::info!("packet interceptor created");
                 int
@@ -289,7 +289,7 @@ pub fn launch_projector_auto(
             s.message = None;
             s.last_projector_rect = None;
             s.qq_num = Some(qq_num);
-            s.wpe_interceptor = Some(_interceptor);
+            s.wpe_interceptor = Some(Arc::new(_interceptor));
         });
 
         emit_status(app, &state.lock().expect("state lock"));
